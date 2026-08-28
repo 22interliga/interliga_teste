@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Interliga — Teste Selfie de Segurança</title>
+<style>
+:root{--bg:#060C1A;--card:#0D1117;--card2:#161B22;--bd:#30363D;--tx:#E6EDF3;--muted:#8B949E;--or:#FF6B00;--blue:#1270C2;--green:#22C55E;--red:#E8002D}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;min-height:100vh;padding:18px}.wrap{max-width:460px;margin:0 auto}.brand{font-size:26px;font-weight:900;margin:4px 0 2px}.brand span{color:var(--or)}.sub{font-size:13px;color:var(--muted);margin-bottom:18px}.card{background:var(--card);border:1px solid var(--bd);border-radius:16px;padding:16px;margin-bottom:14px}.title{font-size:16px;font-weight:800;margin-bottom:6px}.desc{font-size:12px;color:var(--muted);line-height:1.5;margin-bottom:12px}.preview{width:128px;height:128px;border-radius:50%;background:var(--card2);border:2px dashed var(--bd);display:flex;align-items:center;justify-content:center;margin:0 auto 12px;overflow:hidden;font-size:36px}.preview img{width:100%;height:100%;object-fit:cover}.btn{width:100%;padding:13px 14px;border:0;border-radius:11px;font-weight:800;font-size:14px;cursor:pointer}.btn-profile{background:var(--blue);color:white}.btn-camera{background:linear-gradient(90deg,var(--or),#FF8C42);color:white}.status{font-size:12px;text-align:center;color:var(--muted);margin-top:10px}.ok{color:var(--green)}.warn{color:#F59E0B}.note{font-size:11px;color:var(--muted);line-height:1.5;margin-top:10px}.compare{display:grid;grid-template-columns:1fr 1fr;gap:10px}.compare .preview{width:108px;height:108px}.modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.9);z-index:999;align-items:center;justify-content:center;padding:18px}.modal.show{display:flex}.modal-card{width:min(430px,100%);background:var(--card);border:1px solid var(--bd);border-radius:18px;padding:14px;text-align:center}video{width:100%;aspect-ratio:3/4;object-fit:cover;border-radius:14px;background:#111;transform:scaleX(-1)}.row{display:flex;gap:8px;margin-top:10px}.row button{flex:1}.btn-secondary{background:var(--card2);color:var(--tx);border:1px solid var(--bd)}.badge{display:inline-block;padding:4px 9px;border-radius:999px;background:rgba(245,158,11,.12);color:#F59E0B;font-size:11px;font-weight:700;margin-top:8px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="brand">INTER<span>LIGA</span></div>
+  <div class="sub">Teste — validação de identidade do motorista</div>
+
+  <div class="card">
+    <div class="title">1. Foto de perfil</div>
+    <div class="desc">Pode ser escolhida da galeria ou tirada pela câmera. Esta é a foto de referência.</div>
+    <div class="preview" id="perfilPreview">👤</div>
+    <label class="btn btn-profile" style="display:block;text-align:center;">Escolher foto de perfil
+      <input type="file" id="perfilInput" accept="image/*" style="display:none">
+    </label>
+    <div class="status" id="perfilStatus">Nenhuma foto selecionada</div>
+  </div>
+
+  <div class="card">
+    <div class="title">2. Selfie de segurança</div>
+    <div class="desc">Esta etapa usa somente a câmera frontal aberta ao vivo. Não há botão de galeria.</div>
+    <div class="preview" id="segPreview">🔐</div>
+    <button class="btn btn-camera" id="abrirCamera">Abrir câmera frontal</button>
+    <div class="status" id="segStatus">Pendente</div>
+    <div class="note">Neste teste a imagem é mantida somente nesta página. Nenhuma validação facial automática é realizada.</div>
+  </div>
+
+  <div class="card">
+    <div class="title">Conferência</div>
+    <div class="compare">
+      <div><div class="preview" id="cmpPerfil">👤</div><div class="status">Perfil</div></div>
+      <div><div class="preview" id="cmpSeg">🔒</div><div class="status">Selfie ao vivo</div></div>
+    </div>
+    <div class="status" id="finalStatus"><span class="badge">Aguardando captura</span></div>
+  </div>
+</div>
+
+<div class="modal" id="modal">
+  <div class="modal-card">
+    <div class="title">Selfie de segurança</div>
+    <div class="desc">Centralize o rosto e olhe diretamente para a câmera.</div>
+    <video id="video" autoplay playsinline muted></video>
+    <canvas id="canvas" style="display:none"></canvas>
+    <div class="row">
+      <button class="btn btn-camera" id="capturar">📷 Capturar</button>
+      <button class="btn btn-secondary" id="cancelar">Cancelar</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const perfilInput=document.getElementById('perfilInput');
+const perfilPreview=document.getElementById('perfilPreview');
+const cmpPerfil=document.getElementById('cmpPerfil');
+const perfilStatus=document.getElementById('perfilStatus');
+const segPreview=document.getElementById('segPreview');
+const cmpSeg=document.getElementById('cmpSeg');
+const segStatus=document.getElementById('segStatus');
+const finalStatus=document.getElementById('finalStatus');
+const modal=document.getElementById('modal');
+const video=document.getElementById('video');
+const canvas=document.getElementById('canvas');
+let stream=null;
+
+perfilInput.addEventListener('change',()=>{
+  const f=perfilInput.files?.[0]; if(!f)return;
+  const r=new FileReader();
+  r.onload=()=>{
+    const img=`<img src="${r.result}">`;
+    perfilPreview.innerHTML=img; cmpPerfil.innerHTML=img;
+    perfilStatus.textContent='✅ Foto de perfil carregada'; perfilStatus.className='status ok';
+    atualizarFinal();
+  };
+  r.readAsDataURL(f);
+});
+
+document.getElementById('abrirCamera').addEventListener('click',async()=>{
+  if(!navigator.mediaDevices?.getUserMedia){segStatus.textContent='⚠️ Este navegador não liberou a câmera.';segStatus.className='status warn';return;}
+  try{
+    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'user'},width:{ideal:720},height:{ideal:960}},audio:false});
+    video.srcObject=stream; modal.classList.add('show'); segStatus.textContent='Câmera frontal aberta';
+  }catch(e){segStatus.textContent='⚠️ Permita o acesso à câmera para continuar.';segStatus.className='status warn';}
+});
+
+function fechar(){if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;}video.srcObject=null;modal.classList.remove('show');}
+document.getElementById('cancelar').addEventListener('click',fechar);
+document.getElementById('capturar').addEventListener('click',()=>{
+  if(!video.videoWidth)return;
+  const escala=Math.min(1,720/video.videoWidth);canvas.width=Math.round(video.videoWidth*escala);canvas.height=Math.round(video.videoHeight*escala);
+  const ctx=canvas.getContext('2d');ctx.translate(canvas.width,0);ctx.scale(-1,1);ctx.drawImage(video,0,0,canvas.width,canvas.height);
+  const foto=canvas.toDataURL('image/jpeg',.8);const img=`<img src="${foto}">`;segPreview.innerHTML=img;cmpSeg.innerHTML=img;
+  segStatus.textContent='✅ Selfie capturada pela câmera ao vivo';segStatus.className='status ok';segPreview.dataset.ok='1';fechar();atualizarFinal();
+});
+function atualizarFinal(){const temPerfil=perfilPreview.querySelector('img');const temSeg=segPreview.dataset.ok==='1';if(temPerfil&&temSeg){finalStatus.innerHTML='<span class="badge" style="background:rgba(34,197,94,.12);color:#22C55E">Pronto para comparação facial</span>';}else{finalStatus.innerHTML='<span class="badge">Aguardando captura</span>';}}
+</script>
+</body>
+</html>
