@@ -6,78 +6,52 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    function userDoc() {
-      return get(/databases/$(database)/documents/usuarios/$(request.auth.uid));
+    function estabelecimentoDoc() {
+      return get(/databases/$(database)/documents/usuariosEstabelecimentos/$(request.auth.uid));
     }
 
-    function perfil() {
-      return signedIn() ? userDoc().data.perfil : null;
+    function estabelecimentoAtivo() {
+      return signedIn()
+        && estabelecimentoDoc().data.perfil == 'estabelecimento'
+        && estabelecimentoDoc().data.ativo == true;
     }
 
-    function minhaFranquia() {
-      return signedIn() ? userDoc().data.franquiaId : null;
+    function minhaFranquiaEstabelecimento() {
+      return estabelecimentoAtivo() ? estabelecimentoDoc().data.franquiaId : null;
     }
 
     function minhaLoja() {
-      return signedIn() ? userDoc().data.lojaId : null;
+      return estabelecimentoAtivo() ? estabelecimentoDoc().data.lojaId : null;
     }
 
-    function master() {
-      return signedIn() && perfil() == 'admin_master';
+    // O estabelecimento autenticado pode ler somente o proprio vinculo.
+    // Escrita deste documento permanece bloqueada no cliente.
+    match /usuariosEstabelecimentos/{uid} {
+      allow read: if signedIn() && request.auth.uid == uid;
+      allow write: if false;
     }
 
-    function franqueado(fid) {
-      return signedIn() && perfil() == 'franqueado' && minhaFranquia() == fid;
-    }
-
-    function estabelecimento(fid, lojaId) {
-      return signedIn()
-        && perfil() == 'estabelecimento'
-        && minhaFranquia() == fid
-        && minhaLoja() == lojaId;
-    }
-
-    // Cadastro de identidade da franquia: somente Master altera.
-    match /franquias/{fid} {
-      allow read: if master() || franqueado(fid) || (signedIn() && minhaFranquia() == fid);
-      allow write: if master();
-    }
-
-    // Perfil de acesso: usuário lê apenas o próprio perfil. Master administra.
-    match /usuarios/{uid} {
-      allow read: if master() || (signedIn() && request.auth.uid == uid);
-      allow write: if master();
-    }
-
-    // Configuração operacional local: franqueado da própria base.
-    match /configOperacional/{fid} {
-      allow read: if master() || franqueado(fid);
-      allow create, update: if master() || franqueado(fid);
-      allow delete: if master();
-    }
-
-    // Mensalidade: franqueado apenas lê; pagamento nunca é gravado pelo cliente.
-    match /mensalidades/{fid}/{document=**} {
-      allow read: if master() || franqueado(fid);
-      allow write: if master();
-    }
-
-    // Estabelecimentos da franquia.
+    // Estrutura de homologacao do Interfood.
+    // A loja so acessa a franquia e loja gravadas no seu vinculo autenticado.
     match /franquias/{fid}/estabelecimentos/{lojaId} {
-      allow read: if master() || franqueado(fid) || estabelecimento(fid, lojaId);
-      allow create, delete: if master() || franqueado(fid);
-      allow update: if master() || franqueado(fid) || estabelecimento(fid, lojaId);
+      allow read: if estabelecimentoAtivo()
+        && minhaFranquiaEstabelecimento() == fid
+        && minhaLoja() == lojaId;
 
-      // Pedidos isolados pela franquia e pela loja.
+      // Nesta primeira homologacao, alteracao do cadastro da loja fica fechada.
+      allow write: if false;
+
       match /pedidos/{pedidoId} {
-        allow read: if master() || franqueado(fid) || estabelecimento(fid, lojaId);
-        allow create: if master() || franqueado(fid) || estabelecimento(fid, lojaId);
-        allow update: if master() || franqueado(fid) || estabelecimento(fid, lojaId);
-        allow delete: if master();
+        allow read: if estabelecimentoAtivo()
+          && minhaFranquiaEstabelecimento() == fid
+          && minhaLoja() == lojaId;
+
+        // Liberaremos transicoes de status em etapa separada, com validacao de campos.
+        allow write: if false;
       }
     }
 
-    // Bloqueia qualquer caminho não explicitamente permitido.
+    // Tudo que nao foi explicitamente autorizado permanece bloqueado.
     match /{document=**} {
       allow read, write: if false;
     }
