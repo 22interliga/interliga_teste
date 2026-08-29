@@ -1,7 +1,6 @@
 /* Interfood - camada de autenticacao para HOMOLOGACAO.
-   Este arquivo NAO conecta sozinho ao Firebase. Ele so inicializa quando uma configuracao
-   de projeto de TESTE valida for fornecida por firebase-interfood-config-teste.js.
-   Projeto de producao e explicitamente recusado. */
+   Usa exclusivamente o projeto Firebase de teste configurado em
+   firebase-interfood-config-teste.js e recusa producao. */
 (function(){
   const PROD_ID='interliga-mobilidade';
   function cfg(){return window.INTERFOOD_FIREBASE_TEST_CONFIG||null}
@@ -26,14 +25,15 @@
     const {auth,db}=await iniciar();
     const cred=await auth.signInWithEmailAndPassword(email,senha);
     const uid=cred.user.uid;
-    const snap=await db.collection('usuarios').doc(uid).get();
-    if(!snap.exists){await auth.signOut();throw new Error('Perfil de acesso nao encontrado.');}
+    const snap=await db.collection('usuariosEstabelecimentos').doc(uid).get();
+    if(!snap.exists){await auth.signOut();throw new Error('Vinculo do estabelecimento nao encontrado.');}
     const p=snap.data()||{};
-    if(p.ativo===false){await auth.signOut();throw new Error('Acesso bloqueado.');}
+    if(p.ativo!==true){await auth.signOut();throw new Error('Acesso bloqueado.');}
     if(p.perfil!=='estabelecimento'){await auth.signOut();throw new Error('Perfil nao autorizado para este painel.');}
     if(!p.franquiaId||!p.lojaId){await auth.signOut();throw new Error('Perfil sem franquia/loja vinculada.');}
-    sessionStorage.setItem('interliga_sessao_estabelecimento_firebase',JSON.stringify({uid,franquiaId:p.franquiaId,lojaId:p.lojaId,email:cred.user.email,loginEm:new Date().toISOString()}));
-    return {uid,...p,email:cred.user.email};
+    const sessao={uid,franquiaId:p.franquiaId,lojaId:p.lojaId,email:cred.user.email,loginEm:new Date().toISOString()};
+    sessionStorage.setItem('interliga_sessao_estabelecimento_firebase',JSON.stringify(sessao));
+    return {...sessao,...p};
   }
   async function sair(){
     try{const {auth}=await iniciar();await auth.signOut()}finally{sessionStorage.removeItem('interliga_sessao_estabelecimento_firebase')}
