@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Diagnóstico Firebase Auth · Homologação</title>
+  <style>
+    body{margin:0;font-family:Arial,Helvetica,sans-serif;background:#07111f;color:#f4f7fb;min-height:100vh;display:grid;place-items:center;padding:20px;box-sizing:border-box}
+    .card{width:min(720px,100%);background:#0f1b2e;border:1px solid #2b3b55;border-radius:18px;padding:24px;box-sizing:border-box}
+    h1{margin:0 0 6px;font-size:26px}.muted{color:#9fb0c7;margin-bottom:18px}.ok{background:#0d2a22;border:1px solid #167b57;color:#71f0bd;padding:12px;border-radius:10px;margin:12px 0}.warn{background:#33240f;border:1px solid #8a5d18;color:#ffd98a;padding:12px;border-radius:10px;margin:12px 0}label{display:block;margin:14px 0 6px}input{width:100%;box-sizing:border-box;padding:12px;border-radius:10px;border:1px solid #334560;background:#17253a;color:#fff;font-size:16px}button{width:100%;padding:13px;border:0;border-radius:10px;background:#ff6a00;color:#fff;font-weight:700;font-size:16px;margin-top:16px;cursor:pointer}pre{white-space:pre-wrap;word-break:break-word;background:#08111f;border:1px solid #253651;border-radius:10px;padding:14px;min-height:90px}.small{font-size:13px;color:#9fb0c7}
+  </style>
+</head>
+<body>
+  <main class="card">
+    <h1>Diagnóstico direto · Firebase Auth</h1>
+    <div class="muted">Homologação isolada. Este teste chama diretamente a API oficial do Firebase Authentication.</div>
+    <div class="ok">Projeto alvo: <strong>interliga-homologacao-eb0f2</strong></div>
+    <div class="warn">A senha é usada apenas nesta página para o teste e não é salva no navegador nem enviada ao GitHub.</div>
+
+    <label for="email">E-mail</label>
+    <input id="email" type="email" value="casa.candeias@interliga-teste.com" autocomplete="username" />
+
+    <label for="senha">Senha</label>
+    <input id="senha" type="password" autocomplete="current-password" />
+
+    <button id="btn">Testar autenticação diretamente</button>
+
+    <label>Resultado técnico</label>
+    <pre id="resultado">Aguardando teste...</pre>
+    <div class="small">Se aparecer INVALID_API_KEY, o Google rejeitou a chave. Se aparecer INVALID_LOGIN_CREDENTIALS ou sucesso, a chave foi aceita.</div>
+  </main>
+
+<script>
+const API_KEY = "AIzaSyBwMMsff1hV-6vDuQb3EK-EvSkkhYVBRFE";
+const endpoint = `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${encodeURIComponent(API_KEY)}`;
+
+document.getElementById('btn').addEventListener('click', async () => {
+  const out = document.getElementById('resultado');
+  const email = document.getElementById('email').value.trim();
+  const password = document.getElementById('senha').value;
+  out.textContent = 'Testando diretamente no Firebase Authentication...';
+
+  try {
+    const resp = await fetch(endpoint, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({email,password,returnSecureToken:true})
+    });
+    const data = await resp.json().catch(() => ({}));
+
+    if (resp.ok) {
+      out.textContent = [
+        'SUCESSO ✅',
+        'A API key foi aceita pelo Google.',
+        `HTTP: ${resp.status}`,
+        `E-mail: ${data.email || email}`,
+        `UID: ${data.localId || '(não informado)'}`
+      ].join('\n');
+      return;
+    }
+
+    const msg = data?.error?.message || `HTTP_${resp.status}`;
+    out.textContent = [
+      'FALHA ❌',
+      `HTTP: ${resp.status}`,
+      `Firebase: ${msg}`,
+      '',
+      msg === 'INVALID_API_KEY'
+        ? 'DIAGNÓSTICO: o Google rejeitou a própria API key.'
+        : 'DIAGNÓSTICO: a API key foi reconhecida; a falha está em outra etapa (por exemplo credencial do usuário ou configuração do Auth).'
+    ].join('\n');
+  } catch (e) {
+    out.textContent = `ERRO DE REDE/NAVEGADOR: ${e.message}`;
+  }
+});
+</script>
+</body>
+</html>
