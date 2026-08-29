@@ -1,0 +1,85 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function userDoc() {
+      return get(/databases/$(database)/documents/usuarios/$(request.auth.uid));
+    }
+
+    function perfil() {
+      return signedIn() ? userDoc().data.perfil : null;
+    }
+
+    function minhaFranquia() {
+      return signedIn() ? userDoc().data.franquiaId : null;
+    }
+
+    function minhaLoja() {
+      return signedIn() ? userDoc().data.lojaId : null;
+    }
+
+    function master() {
+      return signedIn() && perfil() == 'admin_master';
+    }
+
+    function franqueado(fid) {
+      return signedIn() && perfil() == 'franqueado' && minhaFranquia() == fid;
+    }
+
+    function estabelecimento(fid, lojaId) {
+      return signedIn()
+        && perfil() == 'estabelecimento'
+        && minhaFranquia() == fid
+        && minhaLoja() == lojaId;
+    }
+
+    // Cadastro de identidade da franquia: somente Master altera.
+    match /franquias/{fid} {
+      allow read: if master() || franqueado(fid) || (signedIn() && minhaFranquia() == fid);
+      allow write: if master();
+    }
+
+    // Perfil de acesso: usuário lê apenas o próprio perfil. Master administra.
+    match /usuarios/{uid} {
+      allow read: if master() || (signedIn() && request.auth.uid == uid);
+      allow write: if master();
+    }
+
+    // Configuração operacional local: franqueado da própria base.
+    match /configOperacional/{fid} {
+      allow read: if master() || franqueado(fid);
+      allow create, update: if master() || franqueado(fid);
+      allow delete: if master();
+    }
+
+    // Mensalidade: franqueado apenas lê; pagamento nunca é gravado pelo cliente.
+    match /mensalidades/{fid}/{document=**} {
+      allow read: if master() || franqueado(fid);
+      allow write: if master();
+    }
+
+    // Estabelecimentos da franquia.
+    match /franquias/{fid}/estabelecimentos/{lojaId} {
+      allow read: if master() || franqueado(fid) || estabelecimento(fid, lojaId);
+      allow create, delete: if master() || franqueado(fid);
+      allow update: if master() || franqueado(fid) || estabelecimento(fid, lojaId);
+
+      // Pedidos isolados pela franquia e pela loja.
+      match /pedidos/{pedidoId} {
+        allow read: if master() || franqueado(fid) || estabelecimento(fid, lojaId);
+        allow create: if master() || franqueado(fid) || estabelecimento(fid, lojaId);
+        allow update: if master() || franqueado(fid) || estabelecimento(fid, lojaId);
+        allow delete: if master();
+      }
+    }
+
+    // Bloqueia qualquer caminho não explicitamente permitido.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
