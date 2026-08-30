@@ -14,6 +14,10 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/usuariosEntregadores/$(request.auth.uid));
     }
 
+    function franqueadoDoc() {
+      return get(/databases/$(database)/documents/franqueados/$(request.auth.uid));
+    }
+
     function estabelecimentoAtivo() {
       return signedIn()
         && estabelecimentoDoc().data.perfil == 'estabelecimento'
@@ -24,6 +28,12 @@ service cloud.firestore {
       return signedIn()
         && entregadorDoc().data.perfil == 'entregador'
         && entregadorDoc().data.ativo == true;
+    }
+
+    function franqueadoAtivo() {
+      return signedIn()
+        && franqueadoDoc().data.perfil == 'franqueado'
+        && franqueadoDoc().data.ativo == true;
     }
 
     function minhaFranquiaEstabelecimento() {
@@ -38,6 +48,10 @@ service cloud.firestore {
       return entregadorAtivo() ? entregadorDoc().data.franquiaId : null;
     }
 
+    function minhaFranquiaFranqueado() {
+      return franqueadoAtivo() ? franqueadoDoc().data.franquiaId : null;
+    }
+
     function souDonoDaLoja(fid, lojaId) {
       return estabelecimentoAtivo()
         && minhaFranquiaEstabelecimento() == fid
@@ -46,6 +60,10 @@ service cloud.firestore {
 
     function entregadorDaFranquia(fid) {
       return entregadorAtivo() && minhaFranquiaEntregador() == fid;
+    }
+
+    function franqueadoDaFranquia(fid) {
+      return franqueadoAtivo() && minhaFranquiaFranqueado() == fid;
     }
 
     function somenteStatusFoiAlterado() {
@@ -100,20 +118,34 @@ service cloud.firestore {
       allow write: if false;
     }
 
-    match /franquias/{fid}/estabelecimentos/{lojaId} {
-      allow read: if souDonoDaLoja(fid, lojaId) || entregadorDaFranquia(fid);
+    match /franqueados/{uid} {
+      allow read: if signedIn() && request.auth.uid == uid;
+      allow write: if false;
+    }
+
+    match /franquias/{fid} {
+      allow read: if franqueadoDaFranquia(fid);
       allow write: if false;
 
-      match /pedidos/{pedidoId} {
-        allow read: if souDonoDaLoja(fid, lojaId) || entregadorDaFranquia(fid);
+      match /estabelecimentos/{lojaId} {
+        allow read: if souDonoDaLoja(fid, lojaId)
+          || entregadorDaFranquia(fid)
+          || franqueadoDaFranquia(fid);
+        allow write: if false;
 
-        allow update: if
-          (souDonoDaLoja(fid, lojaId)
-            && somenteStatusFoiAlterado()
-            && transicaoStatusEstabelecimentoValida())
-          || (entregadorDaFranquia(fid) && transicaoEntregadorValida());
+        match /pedidos/{pedidoId} {
+          allow read: if souDonoDaLoja(fid, lojaId)
+            || entregadorDaFranquia(fid)
+            || franqueadoDaFranquia(fid);
 
-        allow create, delete: if false;
+          allow update: if
+            (souDonoDaLoja(fid, lojaId)
+              && somenteStatusFoiAlterado()
+              && transicaoStatusEstabelecimentoValida())
+            || (entregadorDaFranquia(fid) && transicaoEntregadorValida());
+
+          allow create, delete: if false;
+        }
       }
     }
 
