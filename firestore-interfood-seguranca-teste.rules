@@ -24,34 +24,49 @@ service cloud.firestore {
       return estabelecimentoAtivo() ? estabelecimentoDoc().data.lojaId : null;
     }
 
-    // O estabelecimento autenticado pode ler somente o proprio vinculo.
-    // Escrita deste documento permanece bloqueada no cliente.
+    function souDonoDaLoja(fid, lojaId) {
+      return estabelecimentoAtivo()
+        && minhaFranquiaEstabelecimento() == fid
+        && minhaLoja() == lojaId;
+    }
+
+    function somenteStatusFoiAlterado() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status']);
+    }
+
+    function transicaoStatusValida() {
+      return
+        ((resource.data.status == 'Novo' || resource.data.status == 'Pendente')
+          && request.resource.data.status == 'Confirmado')
+        || (resource.data.status == 'Confirmado'
+          && request.resource.data.status == 'Em preparo')
+        || (resource.data.status == 'Em preparo'
+          && request.resource.data.status == 'Pronto');
+    }
+
     match /usuariosEstabelecimentos/{uid} {
       allow read: if signedIn() && request.auth.uid == uid;
       allow write: if false;
     }
 
-    // Estrutura de homologacao do Interfood.
-    // A loja so acessa a franquia e loja gravadas no seu vinculo autenticado.
     match /franquias/{fid}/estabelecimentos/{lojaId} {
-      allow read: if estabelecimentoAtivo()
-        && minhaFranquiaEstabelecimento() == fid
-        && minhaLoja() == lojaId;
-
-      // Nesta primeira homologacao, alteracao do cadastro da loja fica fechada.
+      allow read: if souDonoDaLoja(fid, lojaId);
       allow write: if false;
 
       match /pedidos/{pedidoId} {
-        allow read: if estabelecimentoAtivo()
-          && minhaFranquiaEstabelecimento() == fid
-          && minhaLoja() == lojaId;
+        allow read: if souDonoDaLoja(fid, lojaId);
 
-        // Liberaremos transicoes de status em etapa separada, com validacao de campos.
-        allow write: if false;
+        // O estabelecimento pode alterar SOMENTE o campo status
+        // e apenas na sequência operacional aprovada.
+        allow update: if souDonoDaLoja(fid, lojaId)
+          && somenteStatusFoiAlterado()
+          && transicaoStatusValida();
+
+        // Criação e exclusão permanecem bloqueadas no painel do estabelecimento.
+        allow create, delete: if false;
       }
     }
 
-    // Tudo que nao foi explicitamente autorizado permanece bloqueado.
     match /{document=**} {
       allow read, write: if false;
     }
