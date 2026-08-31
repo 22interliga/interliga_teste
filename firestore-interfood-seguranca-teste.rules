@@ -108,12 +108,23 @@ service cloud.firestore {
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','concluidoEm']));
     }
 
+    function franqueadoPodeAlternarAcessoEstabelecimento() {
+      return franqueadoAtivo()
+        && resource.data.franquiaId == minhaFranquiaFranqueado()
+        && request.resource.data.franquiaId == resource.data.franquiaId
+        && request.resource.data.lojaId == resource.data.lojaId
+        && request.resource.data.perfil == resource.data.perfil
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['ativo'])
+        && request.resource.data.ativo is bool;
+    }
+
     match /usuariosEstabelecimentos/{uid} {
       allow read: if
         (signedIn() && request.auth.uid == uid)
         || (franqueadoAtivo()
           && resource.data.franquiaId == minhaFranquiaFranqueado());
-      allow write: if false;
+      allow update: if franqueadoPodeAlternarAcessoEstabelecimento();
+      allow create, delete: if false;
     }
 
     match /usuariosEntregadores/{uid} {
