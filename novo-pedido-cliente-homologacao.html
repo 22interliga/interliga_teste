@@ -35,7 +35,8 @@ document.getElementById('titulo').textContent=nome;
 document.getElementById('destino').textContent='Franquia '+fid+' · Loja '+loja;
 const cfg=window.INTERFOOD_FIREBASE_TEST_CONFIG;
 if(!cfg||cfg.projectId==='interliga-mobilidade') throw new Error('Configuração de homologação inválida.');
-const app=firebase.apps.length?firebase.app():firebase.initializeApp(cfg);
+const appName='interligaClienteHomologacao';
+const app=firebase.apps.find(a=>a.name===appName)||firebase.initializeApp(cfg,appName);
 const auth=app.auth(),db=app.firestore();
 function esc(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
 function ajustarEntrega(){const retirada=document.getElementById('entrega').value==='Retirada';const e=document.getElementById('endereco');e.disabled=retirada;if(retirada)e.value='Retirada no estabelecimento';else if(e.value==='Retirada no estabelecimento')e.value='Rua de Teste, 100';}
@@ -57,12 +58,7 @@ async function enviarPedido(){
    if(entrega==='Interfood'&&!endereco) throw new Error('Informe o endereço de entrega.');
    const ref=db.collection('franquias').doc(fid).collection('estabelecimentos').doc(loja).collection('pedidos').doc();
    const numero='PED-'+ref.id.slice(0,8).toUpperCase();
-   await ref.set({
-     numero,cliente,telefone,entrega,valor,endereco,observacoes,pagamento,status:'Novo',
-     clienteUid:u.uid,franquiaId:fid,lojaId:loja,
-     criadoEm:firebase.firestore.FieldValue.serverTimestamp(),
-     origem:'cliente-homologacao'
-   });
+   await ref.set({numero,cliente,telefone,entrega,valor,endereco,observacoes,pagamento,status:'Novo',clienteUid:u.uid,franquiaId:fid,lojaId:loja,criadoEm:firebase.firestore.FieldValue.serverTimestamp(),origem:'cliente-homologacao'});
    const rastreio='acompanhar-pedido-cliente-homologacao.html?franquia='+encodeURIComponent(fid)+'&loja='+encodeURIComponent(loja)+'&pedido='+encodeURIComponent(ref.id);
    msg.innerHTML='<div class="ok"><b>Pedido enviado com sucesso ✅</b><br>Número: '+esc(numero)+'<br>ID: '+esc(ref.id)+'<br><br><a href="'+rastreio+'">Acompanhar este pedido</a></div>';
  }catch(e){msg.innerHTML='<div class="bad"><b>Não foi possível enviar:</b> '+esc(e.message||e)+'</div>';}
