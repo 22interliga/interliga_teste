@@ -36,6 +36,11 @@ service cloud.firestore {
         && franqueadoDoc().data.ativo == true;
     }
 
+    function clienteAnonimo() {
+      return signedIn()
+        && request.auth.token.firebase.sign_in_provider == 'anonymous';
+    }
+
     function minhaFranquiaEstabelecimento() {
       return estabelecimentoAtivo() ? estabelecimentoDoc().data.franquiaId : null;
     }
@@ -64,6 +69,11 @@ service cloud.firestore {
 
     function franqueadoDaFranquia(fid) {
       return franqueadoAtivo() && minhaFranquiaFranqueado() == fid;
+    }
+
+    function clienteEhDonoDoPedido() {
+      return clienteAnonimo()
+        && resource.data.clienteUid == request.auth.uid;
     }
 
     function somenteStatusFoiAlterado() {
@@ -141,19 +151,29 @@ service cloud.firestore {
     }
 
     function clienteAnonimoPodeCriarPedido(fid, lojaId) {
-      return signedIn()
-        && request.auth.token.firebase.sign_in_provider == 'anonymous'
+      return clienteAnonimo()
         && get(/databases/$(database)/documents/franquias/$(fid)/estabelecimentos/$(lojaId)).data.ativo == true
         && request.resource.data.keys().hasOnly([
-          'numero','cliente','entrega','valor','endereco','status','clienteUid',
-          'franquiaId','lojaId','criadoEm','origem'
+          'numero','cliente','telefone','entrega','valor','endereco','observacoes','pagamento',
+          'status','clienteUid','franquiaId','lojaId','criadoEm','origem'
         ])
         && request.resource.data.numero is string
+        && request.resource.data.numero.size() >= 5
+        && request.resource.data.numero.size() <= 40
         && request.resource.data.cliente is string
-        && request.resource.data.entrega is string
+        && request.resource.data.cliente.size() >= 2
+        && request.resource.data.cliente.size() <= 120
+        && request.resource.data.telefone is string
+        && request.resource.data.telefone.size() <= 30
+        && request.resource.data.entrega in ['Interfood','Retirada']
         && request.resource.data.valor is number
         && request.resource.data.valor > 0
+        && request.resource.data.valor <= 100000
         && request.resource.data.endereco is string
+        && request.resource.data.endereco.size() <= 300
+        && request.resource.data.observacoes is string
+        && request.resource.data.observacoes.size() <= 500
+        && request.resource.data.pagamento in ['Pix','Dinheiro','Cartão na entrega','Online']
         && request.resource.data.status == 'Novo'
         && request.resource.data.clienteUid == request.auth.uid
         && request.resource.data.franquiaId == fid
@@ -196,7 +216,8 @@ service cloud.firestore {
         match /pedidos/{pedidoId} {
           allow read: if souDonoDaLoja(fid, lojaId)
             || entregadorDaFranquia(fid)
-            || franqueadoDaFranquia(fid);
+            || franqueadoDaFranquia(fid)
+            || clienteEhDonoDoPedido();
 
           allow create: if clienteAnonimoPodeCriarPedido(fid, lojaId);
 
