@@ -6,11 +6,13 @@ service cloud.firestore {
     function estabelecimentoDoc() { return get(/databases/$(database)/documents/usuariosEstabelecimentos/$(request.auth.uid)); }
     function entregadorDoc() { return get(/databases/$(database)/documents/usuariosEntregadores/$(request.auth.uid)); }
     function franqueadoDoc() { return get(/databases/$(database)/documents/franqueados/$(request.auth.uid)); }
+    function clienteDoc() { return get(/databases/$(database)/documents/clientes/$(request.auth.uid)); }
 
     function estabelecimentoAtivo() { return signedIn() && estabelecimentoDoc().data.perfil == 'estabelecimento' && estabelecimentoDoc().data.ativo == true; }
     function entregadorAtivo() { return signedIn() && entregadorDoc().data.perfil == 'entregador' && entregadorDoc().data.ativo == true; }
     function franqueadoAtivo() { return signedIn() && franqueadoDoc().data.perfil == 'franqueado' && franqueadoDoc().data.ativo == true; }
     function clienteAnonimo() { return signedIn() && request.auth.token.firebase.sign_in_provider == 'anonymous'; }
+    function clienteCadastrado() { return signedIn() && request.auth.token.firebase.sign_in_provider != 'anonymous' && clienteDoc().data.perfil == 'cliente' && clienteDoc().data.ativo == true; }
 
     function minhaFranquiaEstabelecimento() { return estabelecimentoAtivo() ? estabelecimentoDoc().data.franquiaId : null; }
     function minhaLoja() { return estabelecimentoAtivo() ? estabelecimentoDoc().data.lojaId : null; }
@@ -20,7 +22,7 @@ service cloud.firestore {
     function souDonoDaLoja(fid, lojaId) { return estabelecimentoAtivo() && minhaFranquiaEstabelecimento() == fid && minhaLoja() == lojaId; }
     function entregadorDaFranquia(fid) { return entregadorAtivo() && minhaFranquiaEntregador() == fid; }
     function franqueadoDaFranquia(fid) { return franqueadoAtivo() && minhaFranquiaFranqueado() == fid; }
-    function clienteEhDonoDoPedido() { return clienteAnonimo() && resource.data.clienteUid == request.auth.uid; }
+    function clienteEhDonoDoPedido() { return signedIn() && resource.data.clienteUid == request.auth.uid && (clienteAnonimo() || clienteCadastrado()); }
 
     function somenteStatusFoiAlterado() { return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status']); }
     function transicaoStatusEstabelecimentoValida() {
@@ -36,10 +38,8 @@ service cloud.firestore {
         && request.resource.data.motivoCancelamento.size() <= 300
         && request.resource.data.canceladoPor == request.auth.uid
         && request.resource.data.canceladoEm == request.time
-        && (
-          ((resource.data.status == 'Novo' || resource.data.status == 'Pendente') && request.resource.data.status == 'Recusado')
-          || (resource.data.status == 'Confirmado' && request.resource.data.status == 'Cancelado')
-        );
+        && (((resource.data.status == 'Novo' || resource.data.status == 'Pendente') && request.resource.data.status == 'Recusado')
+          || (resource.data.status == 'Confirmado' && request.resource.data.status == 'Cancelado'));
     }
 
     function entregadorEhOAutenticado() { return request.resource.data.entregador.uid == request.auth.uid; }
@@ -60,8 +60,21 @@ service cloud.firestore {
     function franqueadoPodeCriarAcessoEstabelecimento() {
       return franqueadoAtivo() && request.resource.data.keys().hasOnly(['perfil','franquiaId','lojaId','ativo','email','nome','criadoEm']) && request.resource.data.perfil == 'estabelecimento' && request.resource.data.franquiaId == minhaFranquiaFranqueado() && request.resource.data.lojaId is string && request.resource.data.ativo == true && request.resource.data.email is string && request.resource.data.nome is string && existsAfter(/databases/$(database)/documents/franquias/$(request.resource.data.franquiaId)/estabelecimentos/$(request.resource.data.lojaId));
     }
-    function clienteAnonimoPodeCriarPedido(fid, lojaId) {
-      return clienteAnonimo() && get(/databases/$(database)/documents/franquias/$(fid)/estabelecimentos/$(lojaId)).data.ativo == true
+
+    function clientePodeCriarPerfil(uid) {
+      return signedIn() && request.auth.uid == uid
+        && request.auth.token.firebase.sign_in_provider != 'anonymous'
+        && request.resource.data.keys().hasOnly(['nome','telefone','email','ativo','perfil','criadoEm'])
+        && request.resource.data.nome is string && request.resource.data.nome.size() >= 2 && request.resource.data.nome.size() <= 120
+        && request.resource.data.telefone is string && request.resource.data.telefone.size() <= 30
+        && request.resource.data.email == request.auth.token.email
+        && request.resource.data.ativo == true && request.resource.data.perfil == 'cliente'
+        && request.resource.data.criadoEm == request.time;
+    }
+
+    function clientePodeCriarPedido(fid, lojaId) {
+      return signedIn() && (clienteAnonimo() || clienteCadastrado())
+        && get(/databases/$(database)/documents/franquias/$(fid)/estabelecimentos/$(lojaId)).data.ativo == true
         && request.resource.data.keys().hasOnly(['numero','cliente','telefone','entrega','valor','endereco','observacoes','pagamento','status','clienteUid','franquiaId','lojaId','criadoEm','origem'])
         && request.resource.data.numero is string && request.resource.data.numero.size() >= 5 && request.resource.data.numero.size() <= 40
         && request.resource.data.cliente is string && request.resource.data.cliente.size() >= 2 && request.resource.data.cliente.size() <= 120
@@ -72,6 +85,11 @@ service cloud.firestore {
         && request.resource.data.franquiaId == fid && request.resource.data.lojaId == lojaId && request.resource.data.origem == 'cliente-homologacao' && request.resource.data.criadoEm == request.time;
     }
 
+    match /clientes/{uid} {
+      allow create: if clientePodeCriarPerfil(uid);
+      allow read: if signedIn() && request.auth.uid == uid;
+      allow update, delete: if false;
+    }
     match /usuariosEstabelecimentos/{uid} {
       allow read: if (signedIn() && request.auth.uid == uid) || (franqueadoAtivo() && resource.data.franquiaId == minhaFranquiaFranqueado());
       allow update: if franqueadoPodeAlternarAcessoEstabelecimento();
@@ -88,7 +106,7 @@ service cloud.firestore {
         allow create: if franqueadoPodeCriarEstabelecimento(fid, lojaId); allow update, delete: if false;
         match /pedidos/{pedidoId} {
           allow read: if souDonoDaLoja(fid, lojaId) || entregadorDaFranquia(fid) || franqueadoDaFranquia(fid) || clienteEhDonoDoPedido();
-          allow create: if clienteAnonimoPodeCriarPedido(fid, lojaId);
+          allow create: if clientePodeCriarPedido(fid, lojaId);
           allow update: if (souDonoDaLoja(fid, lojaId) && ((somenteStatusFoiAlterado() && transicaoStatusEstabelecimentoValida()) || cancelamentoEstabelecimentoValido())) || (entregadorDaFranquia(fid) && transicaoEntregadorValida());
           allow delete: if false;
         }
