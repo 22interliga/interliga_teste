@@ -3,6 +3,7 @@
    firebase-interfood-config-teste.js e recusa producao. */
 (function(){
   const PROD_ID='interliga-mobilidade';
+  const APP_NAME='interligaEstabelecimentoHomologacao';
   function cfg(){return window.INTERFOOD_FIREBASE_TEST_CONFIG||null}
   function validar(){
     const c=cfg();
@@ -13,10 +14,14 @@
       throw new Error('BLOQUEADO: este integrador nao aceita o projeto Firebase de producao.');
     return c;
   }
+  function obterApp(c){
+    if(!window.firebase || !firebase.initializeApp) throw new Error('SDK Firebase nao carregado.');
+    const existente=(firebase.apps||[]).find(a=>a.name===APP_NAME);
+    return existente||firebase.initializeApp(c,APP_NAME);
+  }
   async function iniciar(){
     const c=validar();
-    if(!window.firebase || !firebase.initializeApp) throw new Error('SDK Firebase nao carregado.');
-    const app=firebase.apps&&firebase.apps.length?firebase.app():firebase.initializeApp(c);
+    const app=obterApp(c);
     const auth=app.auth();
     const db=app.firestore();
     return {app,auth,db,projectId:c.projectId};
