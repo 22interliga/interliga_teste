@@ -118,13 +118,36 @@ service cloud.firestore {
         && request.resource.data.ativo is bool;
     }
 
+    function franqueadoPodeCriarEstabelecimento(fid, lojaId) {
+      return franqueadoDaFranquia(fid)
+        && request.resource.data.keys().hasOnly(['nome','email','ativo','franquiaId','lojaId','criadoEm'])
+        && request.resource.data.nome is string
+        && request.resource.data.email is string
+        && request.resource.data.ativo == true
+        && request.resource.data.franquiaId == fid
+        && request.resource.data.lojaId == lojaId;
+    }
+
+    function franqueadoPodeCriarAcessoEstabelecimento() {
+      return franqueadoAtivo()
+        && request.resource.data.keys().hasOnly(['perfil','franquiaId','lojaId','ativo','email','nome','criadoEm'])
+        && request.resource.data.perfil == 'estabelecimento'
+        && request.resource.data.franquiaId == minhaFranquiaFranqueado()
+        && request.resource.data.lojaId is string
+        && request.resource.data.ativo == true
+        && request.resource.data.email is string
+        && request.resource.data.nome is string
+        && existsAfter(/databases/$(database)/documents/franquias/$(request.resource.data.franquiaId)/estabelecimentos/$(request.resource.data.lojaId));
+    }
+
     match /usuariosEstabelecimentos/{uid} {
       allow read: if
         (signedIn() && request.auth.uid == uid)
         || (franqueadoAtivo()
           && resource.data.franquiaId == minhaFranquiaFranqueado());
       allow update: if franqueadoPodeAlternarAcessoEstabelecimento();
-      allow create, delete: if false;
+      allow create: if franqueadoPodeCriarAcessoEstabelecimento();
+      allow delete: if false;
     }
 
     match /usuariosEntregadores/{uid} {
@@ -145,7 +168,8 @@ service cloud.firestore {
         allow read: if souDonoDaLoja(fid, lojaId)
           || entregadorDaFranquia(fid)
           || franqueadoDaFranquia(fid);
-        allow write: if false;
+        allow create: if franqueadoPodeCriarEstabelecimento(fid, lojaId);
+        allow update, delete: if false;
 
         match /pedidos/{pedidoId} {
           allow read: if souDonoDaLoja(fid, lojaId)
