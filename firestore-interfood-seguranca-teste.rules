@@ -42,6 +42,19 @@ service cloud.firestore {
           || (resource.data.status == 'Confirmado' && request.resource.data.status == 'Cancelado'));
     }
 
+    function cancelamentoClienteValido() {
+      return clienteCadastrado()
+        && resource.data.clienteUid == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','motivoCancelamento','canceladoPor','canceladoEm'])
+        && request.resource.data.motivoCancelamento is string
+        && request.resource.data.motivoCancelamento.size() >= 3
+        && request.resource.data.motivoCancelamento.size() <= 300
+        && request.resource.data.canceladoPor == request.auth.uid
+        && request.resource.data.canceladoEm == request.time
+        && (resource.data.status == 'Novo' || resource.data.status == 'Confirmado')
+        && request.resource.data.status == 'Cancelado';
+    }
+
     function entregadorEhOAutenticado() { return request.resource.data.entregador.uid == request.auth.uid; }
     function pedidoJaEhMeu() { return resource.data.entregador.uid == request.auth.uid; }
     function transicaoEntregadorValida() {
@@ -148,7 +161,9 @@ service cloud.firestore {
         match /pedidos/{pedidoId} {
           allow read: if souDonoDaLoja(fid, lojaId) || entregadorDaFranquia(fid) || franqueadoDaFranquia(fid) || clienteEhDonoDoPedido();
           allow create: if clientePodeCriarPedido(fid, lojaId);
-          allow update: if (souDonoDaLoja(fid, lojaId) && ((somenteStatusFoiAlterado() && transicaoStatusEstabelecimentoValida()) || cancelamentoEstabelecimentoValido())) || (entregadorDaFranquia(fid) && transicaoEntregadorValida());
+          allow update: if (souDonoDaLoja(fid, lojaId) && ((somenteStatusFoiAlterado() && transicaoStatusEstabelecimentoValida()) || cancelamentoEstabelecimentoValido()))
+            || (entregadorDaFranquia(fid) && transicaoEntregadorValida())
+            || cancelamentoClienteValido();
           allow delete: if false;
         }
       }
