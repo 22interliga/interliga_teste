@@ -109,7 +109,10 @@ service cloud.firestore {
     }
 
     match /usuariosEstabelecimentos/{uid} {
-      allow read: if signedIn() && request.auth.uid == uid;
+      allow read: if
+        (signedIn() && request.auth.uid == uid)
+        || (franqueadoAtivo()
+          && resource.data.franquiaId == minhaFranquiaFranqueado());
       allow write: if false;
     }
 
