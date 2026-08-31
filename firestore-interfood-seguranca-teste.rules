@@ -2,238 +2,98 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    function signedIn() {
-      return request.auth != null;
-    }
+    function signedIn() { return request.auth != null; }
+    function estabelecimentoDoc() { return get(/databases/$(database)/documents/usuariosEstabelecimentos/$(request.auth.uid)); }
+    function entregadorDoc() { return get(/databases/$(database)/documents/usuariosEntregadores/$(request.auth.uid)); }
+    function franqueadoDoc() { return get(/databases/$(database)/documents/franqueados/$(request.auth.uid)); }
 
-    function estabelecimentoDoc() {
-      return get(/databases/$(database)/documents/usuariosEstabelecimentos/$(request.auth.uid));
-    }
+    function estabelecimentoAtivo() { return signedIn() && estabelecimentoDoc().data.perfil == 'estabelecimento' && estabelecimentoDoc().data.ativo == true; }
+    function entregadorAtivo() { return signedIn() && entregadorDoc().data.perfil == 'entregador' && entregadorDoc().data.ativo == true; }
+    function franqueadoAtivo() { return signedIn() && franqueadoDoc().data.perfil == 'franqueado' && franqueadoDoc().data.ativo == true; }
+    function clienteAnonimo() { return signedIn() && request.auth.token.firebase.sign_in_provider == 'anonymous'; }
 
-    function entregadorDoc() {
-      return get(/databases/$(database)/documents/usuariosEntregadores/$(request.auth.uid));
-    }
+    function minhaFranquiaEstabelecimento() { return estabelecimentoAtivo() ? estabelecimentoDoc().data.franquiaId : null; }
+    function minhaLoja() { return estabelecimentoAtivo() ? estabelecimentoDoc().data.lojaId : null; }
+    function minhaFranquiaEntregador() { return entregadorAtivo() ? entregadorDoc().data.franquiaId : null; }
+    function minhaFranquiaFranqueado() { return franqueadoAtivo() ? franqueadoDoc().data.franquiaId : null; }
 
-    function franqueadoDoc() {
-      return get(/databases/$(database)/documents/franqueados/$(request.auth.uid));
-    }
+    function souDonoDaLoja(fid, lojaId) { return estabelecimentoAtivo() && minhaFranquiaEstabelecimento() == fid && minhaLoja() == lojaId; }
+    function entregadorDaFranquia(fid) { return entregadorAtivo() && minhaFranquiaEntregador() == fid; }
+    function franqueadoDaFranquia(fid) { return franqueadoAtivo() && minhaFranquiaFranqueado() == fid; }
+    function clienteEhDonoDoPedido() { return clienteAnonimo() && resource.data.clienteUid == request.auth.uid; }
 
-    function estabelecimentoAtivo() {
-      return signedIn()
-        && estabelecimentoDoc().data.perfil == 'estabelecimento'
-        && estabelecimentoDoc().data.ativo == true;
-    }
-
-    function entregadorAtivo() {
-      return signedIn()
-        && entregadorDoc().data.perfil == 'entregador'
-        && entregadorDoc().data.ativo == true;
-    }
-
-    function franqueadoAtivo() {
-      return signedIn()
-        && franqueadoDoc().data.perfil == 'franqueado'
-        && franqueadoDoc().data.ativo == true;
-    }
-
-    function clienteAnonimo() {
-      return signedIn()
-        && request.auth.token.firebase.sign_in_provider == 'anonymous';
-    }
-
-    function minhaFranquiaEstabelecimento() {
-      return estabelecimentoAtivo() ? estabelecimentoDoc().data.franquiaId : null;
-    }
-
-    function minhaLoja() {
-      return estabelecimentoAtivo() ? estabelecimentoDoc().data.lojaId : null;
-    }
-
-    function minhaFranquiaEntregador() {
-      return entregadorAtivo() ? entregadorDoc().data.franquiaId : null;
-    }
-
-    function minhaFranquiaFranqueado() {
-      return franqueadoAtivo() ? franqueadoDoc().data.franquiaId : null;
-    }
-
-    function souDonoDaLoja(fid, lojaId) {
-      return estabelecimentoAtivo()
-        && minhaFranquiaEstabelecimento() == fid
-        && minhaLoja() == lojaId;
-    }
-
-    function entregadorDaFranquia(fid) {
-      return entregadorAtivo() && minhaFranquiaEntregador() == fid;
-    }
-
-    function franqueadoDaFranquia(fid) {
-      return franqueadoAtivo() && minhaFranquiaFranqueado() == fid;
-    }
-
-    function clienteEhDonoDoPedido() {
-      return clienteAnonimo()
-        && resource.data.clienteUid == request.auth.uid;
-    }
-
-    function somenteStatusFoiAlterado() {
-      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status']);
-    }
-
+    function somenteStatusFoiAlterado() { return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status']); }
     function transicaoStatusEstabelecimentoValida() {
-      return
-        ((resource.data.status == 'Novo' || resource.data.status == 'Pendente')
-          && request.resource.data.status == 'Confirmado')
-        || (resource.data.status == 'Confirmado'
-          && request.resource.data.status == 'Em preparo')
-        || (resource.data.status == 'Em preparo'
-          && request.resource.data.status == 'Pronto');
+      return ((resource.data.status == 'Novo' || resource.data.status == 'Pendente') && request.resource.data.status == 'Confirmado')
+        || (resource.data.status == 'Confirmado' && request.resource.data.status == 'Em preparo')
+        || (resource.data.status == 'Em preparo' && request.resource.data.status == 'Pronto');
     }
 
-    function entregadorEhOAutenticado() {
-      return request.resource.data.entregador.uid == request.auth.uid;
+    function cancelamentoEstabelecimentoValido() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','motivoCancelamento','canceladoPor','canceladoEm'])
+        && request.resource.data.motivoCancelamento is string
+        && request.resource.data.motivoCancelamento.size() >= 3
+        && request.resource.data.motivoCancelamento.size() <= 300
+        && request.resource.data.canceladoPor == request.auth.uid
+        && request.resource.data.canceladoEm == request.time
+        && (
+          ((resource.data.status == 'Novo' || resource.data.status == 'Pendente') && request.resource.data.status == 'Recusado')
+          || (resource.data.status == 'Confirmado' && request.resource.data.status == 'Cancelado')
+        );
     }
 
-    function pedidoJaEhMeu() {
-      return resource.data.entregador.uid == request.auth.uid;
-    }
-
+    function entregadorEhOAutenticado() { return request.resource.data.entregador.uid == request.auth.uid; }
+    function pedidoJaEhMeu() { return resource.data.entregador.uid == request.auth.uid; }
     function transicaoEntregadorValida() {
-      return
-        (resource.data.status == 'Pronto'
-          && request.resource.data.status == 'Entregador aceitou'
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','entregador','aceitoEm'])
-          && entregadorEhOAutenticado())
-        || (resource.data.status == 'Entregador aceitou'
-          && request.resource.data.status == 'Coletado'
-          && pedidoJaEhMeu()
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','coletadoEm']))
-        || (resource.data.status == 'Coletado'
-          && request.resource.data.status == 'Saiu para entrega'
-          && pedidoJaEhMeu()
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','saiuEntregaEm']))
-        || (resource.data.status == 'Saiu para entrega'
-          && request.resource.data.status == 'Concluído'
-          && pedidoJaEhMeu()
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','concluidoEm']));
+      return (resource.data.status == 'Pronto' && request.resource.data.status == 'Entregador aceitou' && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','entregador','aceitoEm']) && entregadorEhOAutenticado())
+        || (resource.data.status == 'Entregador aceitou' && request.resource.data.status == 'Coletado' && pedidoJaEhMeu() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','coletadoEm']))
+        || (resource.data.status == 'Coletado' && request.resource.data.status == 'Saiu para entrega' && pedidoJaEhMeu() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','saiuEntregaEm']))
+        || (resource.data.status == 'Saiu para entrega' && request.resource.data.status == 'Concluído' && pedidoJaEhMeu() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','concluidoEm']));
     }
 
     function franqueadoPodeAlternarAcessoEstabelecimento() {
-      return franqueadoAtivo()
-        && resource.data.franquiaId == minhaFranquiaFranqueado()
-        && request.resource.data.franquiaId == resource.data.franquiaId
-        && request.resource.data.lojaId == resource.data.lojaId
-        && request.resource.data.perfil == resource.data.perfil
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['ativo'])
-        && request.resource.data.ativo is bool;
+      return franqueadoAtivo() && resource.data.franquiaId == minhaFranquiaFranqueado() && request.resource.data.franquiaId == resource.data.franquiaId && request.resource.data.lojaId == resource.data.lojaId && request.resource.data.perfil == resource.data.perfil && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['ativo']) && request.resource.data.ativo is bool;
     }
-
     function franqueadoPodeCriarEstabelecimento(fid, lojaId) {
-      return franqueadoDaFranquia(fid)
-        && request.resource.data.keys().hasOnly(['nome','email','ativo','franquiaId','lojaId','criadoEm'])
-        && request.resource.data.nome is string
-        && request.resource.data.email is string
-        && request.resource.data.ativo == true
-        && request.resource.data.franquiaId == fid
-        && request.resource.data.lojaId == lojaId;
+      return franqueadoDaFranquia(fid) && request.resource.data.keys().hasOnly(['nome','email','ativo','franquiaId','lojaId','criadoEm']) && request.resource.data.nome is string && request.resource.data.email is string && request.resource.data.ativo == true && request.resource.data.franquiaId == fid && request.resource.data.lojaId == lojaId;
     }
-
     function franqueadoPodeCriarAcessoEstabelecimento() {
-      return franqueadoAtivo()
-        && request.resource.data.keys().hasOnly(['perfil','franquiaId','lojaId','ativo','email','nome','criadoEm'])
-        && request.resource.data.perfil == 'estabelecimento'
-        && request.resource.data.franquiaId == minhaFranquiaFranqueado()
-        && request.resource.data.lojaId is string
-        && request.resource.data.ativo == true
-        && request.resource.data.email is string
-        && request.resource.data.nome is string
-        && existsAfter(/databases/$(database)/documents/franquias/$(request.resource.data.franquiaId)/estabelecimentos/$(request.resource.data.lojaId));
+      return franqueadoAtivo() && request.resource.data.keys().hasOnly(['perfil','franquiaId','lojaId','ativo','email','nome','criadoEm']) && request.resource.data.perfil == 'estabelecimento' && request.resource.data.franquiaId == minhaFranquiaFranqueado() && request.resource.data.lojaId is string && request.resource.data.ativo == true && request.resource.data.email is string && request.resource.data.nome is string && existsAfter(/databases/$(database)/documents/franquias/$(request.resource.data.franquiaId)/estabelecimentos/$(request.resource.data.lojaId));
     }
-
     function clienteAnonimoPodeCriarPedido(fid, lojaId) {
-      return clienteAnonimo()
-        && get(/databases/$(database)/documents/franquias/$(fid)/estabelecimentos/$(lojaId)).data.ativo == true
-        && request.resource.data.keys().hasOnly([
-          'numero','cliente','telefone','entrega','valor','endereco','observacoes','pagamento',
-          'status','clienteUid','franquiaId','lojaId','criadoEm','origem'
-        ])
-        && request.resource.data.numero is string
-        && request.resource.data.numero.size() >= 5
-        && request.resource.data.numero.size() <= 40
-        && request.resource.data.cliente is string
-        && request.resource.data.cliente.size() >= 2
-        && request.resource.data.cliente.size() <= 120
-        && request.resource.data.telefone is string
-        && request.resource.data.telefone.size() <= 30
-        && request.resource.data.entrega in ['Interfood','Retirada']
-        && request.resource.data.valor is number
-        && request.resource.data.valor > 0
-        && request.resource.data.valor <= 100000
-        && request.resource.data.endereco is string
-        && request.resource.data.endereco.size() <= 300
-        && request.resource.data.observacoes is string
-        && request.resource.data.observacoes.size() <= 500
-        && request.resource.data.pagamento in ['Pix','Dinheiro','Cartão na entrega','Online']
-        && request.resource.data.status == 'Novo'
-        && request.resource.data.clienteUid == request.auth.uid
-        && request.resource.data.franquiaId == fid
-        && request.resource.data.lojaId == lojaId
-        && request.resource.data.origem == 'cliente-homologacao'
-        && request.resource.data.criadoEm == request.time;
+      return clienteAnonimo() && get(/databases/$(database)/documents/franquias/$(fid)/estabelecimentos/$(lojaId)).data.ativo == true
+        && request.resource.data.keys().hasOnly(['numero','cliente','telefone','entrega','valor','endereco','observacoes','pagamento','status','clienteUid','franquiaId','lojaId','criadoEm','origem'])
+        && request.resource.data.numero is string && request.resource.data.numero.size() >= 5 && request.resource.data.numero.size() <= 40
+        && request.resource.data.cliente is string && request.resource.data.cliente.size() >= 2 && request.resource.data.cliente.size() <= 120
+        && request.resource.data.telefone is string && request.resource.data.telefone.size() <= 30
+        && request.resource.data.entrega in ['Interfood','Retirada'] && request.resource.data.valor is number && request.resource.data.valor > 0 && request.resource.data.valor <= 100000
+        && request.resource.data.endereco is string && request.resource.data.endereco.size() <= 300 && request.resource.data.observacoes is string && request.resource.data.observacoes.size() <= 500
+        && request.resource.data.pagamento in ['Pix','Dinheiro','Cartão na entrega','Online'] && request.resource.data.status == 'Novo' && request.resource.data.clienteUid == request.auth.uid
+        && request.resource.data.franquiaId == fid && request.resource.data.lojaId == lojaId && request.resource.data.origem == 'cliente-homologacao' && request.resource.data.criadoEm == request.time;
     }
 
     match /usuariosEstabelecimentos/{uid} {
-      allow read: if
-        (signedIn() && request.auth.uid == uid)
-        || (franqueadoAtivo()
-          && resource.data.franquiaId == minhaFranquiaFranqueado());
+      allow read: if (signedIn() && request.auth.uid == uid) || (franqueadoAtivo() && resource.data.franquiaId == minhaFranquiaFranqueado());
       allow update: if franqueadoPodeAlternarAcessoEstabelecimento();
       allow create: if franqueadoPodeCriarAcessoEstabelecimento();
       allow delete: if false;
     }
-
-    match /usuariosEntregadores/{uid} {
-      allow read: if signedIn() && request.auth.uid == uid;
-      allow write: if false;
-    }
-
-    match /franqueados/{uid} {
-      allow read: if signedIn() && request.auth.uid == uid;
-      allow write: if false;
-    }
+    match /usuariosEntregadores/{uid} { allow read: if signedIn() && request.auth.uid == uid; allow write: if false; }
+    match /franqueados/{uid} { allow read: if signedIn() && request.auth.uid == uid; allow write: if false; }
 
     match /franquias/{fid} {
-      allow read: if franqueadoDaFranquia(fid);
-      allow write: if false;
-
+      allow read: if franqueadoDaFranquia(fid); allow write: if false;
       match /estabelecimentos/{lojaId} {
-        allow read: if souDonoDaLoja(fid, lojaId)
-          || entregadorDaFranquia(fid)
-          || franqueadoDaFranquia(fid);
-        allow create: if franqueadoPodeCriarEstabelecimento(fid, lojaId);
-        allow update, delete: if false;
-
+        allow read: if souDonoDaLoja(fid, lojaId) || entregadorDaFranquia(fid) || franqueadoDaFranquia(fid);
+        allow create: if franqueadoPodeCriarEstabelecimento(fid, lojaId); allow update, delete: if false;
         match /pedidos/{pedidoId} {
-          allow read: if souDonoDaLoja(fid, lojaId)
-            || entregadorDaFranquia(fid)
-            || franqueadoDaFranquia(fid)
-            || clienteEhDonoDoPedido();
-
+          allow read: if souDonoDaLoja(fid, lojaId) || entregadorDaFranquia(fid) || franqueadoDaFranquia(fid) || clienteEhDonoDoPedido();
           allow create: if clienteAnonimoPodeCriarPedido(fid, lojaId);
-
-          allow update: if
-            (souDonoDaLoja(fid, lojaId)
-              && somenteStatusFoiAlterado()
-              && transicaoStatusEstabelecimentoValida())
-            || (entregadorDaFranquia(fid) && transicaoEntregadorValida());
-
+          allow update: if (souDonoDaLoja(fid, lojaId) && ((somenteStatusFoiAlterado() && transicaoStatusEstabelecimentoValida()) || cancelamentoEstabelecimentoValido())) || (entregadorDaFranquia(fid) && transicaoEntregadorValida());
           allow delete: if false;
         }
       }
     }
-
-    match /{document=**} {
-      allow read, write: if false;
-    }
+    match /{document=**} { allow read, write: if false; }
   }
 }
