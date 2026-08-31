@@ -80,16 +80,28 @@ service cloud.firestore {
         && request.resource.data.atualizadoEm == request.time;
     }
 
-    function enderecoClienteValido() {
-      return request.resource.data.keys().hasOnly(['apelido','cep','logradouro','bairro','cidade','uf','complemento','criadoEm'])
-        && request.resource.data.apelido is string && request.resource.data.apelido.size() >= 2 && request.resource.data.apelido.size() <= 60
+    function camposEnderecoValidos() {
+      return request.resource.data.apelido is string && request.resource.data.apelido.size() >= 2 && request.resource.data.apelido.size() <= 60
         && request.resource.data.cep is string && request.resource.data.cep.size() <= 12
         && request.resource.data.logradouro is string && request.resource.data.logradouro.size() >= 4 && request.resource.data.logradouro.size() <= 220
         && request.resource.data.bairro is string && request.resource.data.bairro.size() <= 100
         && request.resource.data.cidade is string && request.resource.data.cidade.size() >= 2 && request.resource.data.cidade.size() <= 100
         && request.resource.data.uf is string && request.resource.data.uf.size() == 2
         && request.resource.data.complemento is string && request.resource.data.complemento.size() <= 120
+        && request.resource.data.principal is bool;
+    }
+
+    function enderecoClienteCriacaoValida() {
+      return request.resource.data.keys().hasOnly(['apelido','cep','logradouro','bairro','cidade','uf','complemento','principal','criadoEm'])
+        && camposEnderecoValidos()
         && request.resource.data.criadoEm == request.time;
+    }
+
+    function enderecoClienteAtualizacaoValida() {
+      return request.resource.data.keys().hasOnly(['apelido','cep','logradouro','bairro','cidade','uf','complemento','principal','criadoEm','atualizadoEm'])
+        && camposEnderecoValidos()
+        && request.resource.data.criadoEm == resource.data.criadoEm
+        && request.resource.data.atualizadoEm == request.time;
     }
 
     function clientePodeCriarPedido(fid, lojaId) {
@@ -113,8 +125,8 @@ service cloud.firestore {
 
       match /enderecos/{enderecoId} {
         allow read: if clienteCadastrado() && request.auth.uid == uid;
-        allow create: if clienteCadastrado() && request.auth.uid == uid && enderecoClienteValido();
-        allow update: if false;
+        allow create: if clienteCadastrado() && request.auth.uid == uid && enderecoClienteCriacaoValida();
+        allow update: if clienteCadastrado() && request.auth.uid == uid && enderecoClienteAtualizacaoValida();
         allow delete: if clienteCadastrado() && request.auth.uid == uid;
       }
     }
