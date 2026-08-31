@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Novo pedido · Interfood Homologação</title>
+<style>
+:root{--p:#ff6b00;--bg:#07101f;--card:#101827;--bd:#2b3648;--muted:#aab4c3}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:#fff;font-family:Arial,sans-serif}.top{background:var(--p);padding:18px 20px;font-size:22px;font-weight:900}.wrap{max-width:720px;margin:auto;padding:20px}.notice,.card{border-radius:14px;padding:16px}.notice{border:1px solid #22c55e66;background:#22c55e18;color:#8bf0ad;margin-bottom:14px}.card{background:var(--card);border:1px solid var(--bd)}label{display:block;margin:13px 0 6px;font-size:13px;color:var(--muted)}input,select{width:100%;padding:12px;border-radius:9px;border:1px solid var(--bd);background:#0a1322;color:#fff;font-size:16px}.btn{width:100%;margin-top:18px;border:0;border-radius:10px;padding:13px;background:var(--p);color:#fff;font-weight:900;font-size:16px;cursor:pointer}.btn[disabled]{opacity:.55}.ok{margin-top:15px;color:#62e993}.bad{margin-top:15px;color:#ff7188}.small{font-size:12px;color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="top">Interfood · Pedido do Cliente</div>
+<div class="wrap">
+<div class="notice">AMBIENTE DE HOMOLOGAÇÃO — este pedido é gravado no Firebase de teste, nunca na produção.</div>
+<div class="card">
+<h2 id="titulo">TESTE TESTE</h2>
+<div class="small" id="destino"></div>
+<label>Nome do cliente</label><input id="cliente" value="Cliente Automático">
+<label>Tipo de entrega</label><select id="entrega"><option>Interfood</option><option>Retirada</option></select>
+<label>Valor do pedido</label><input id="valor" type="number" step="0.01" min="0.01" value="39.90">
+<label>Endereço</label><input id="endereco" value="Rua de Teste, 100">
+<button class="btn" id="btn" onclick="enviarPedido()">Fazer pedido</button>
+<div id="msg"></div>
+</div></div>
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js"></script>
+<script src="firebase-interfood-config-teste.js"></script>
+<script>
+const q=new URLSearchParams(location.search);
+const fid=q.get('franquia')||'candeias';
+const loja=q.get('loja')||'ljc6GjET9wAoBBdQNE8g';
+const nome=q.get('nome')||'TESTE TESTE';
+document.getElementById('titulo').textContent=nome;
+document.getElementById('destino').textContent='Franquia '+fid+' · Loja '+loja;
+const cfg=window.INTERFOOD_FIREBASE_TEST_CONFIG;
+if(!cfg||cfg.projectId==='interliga-mobilidade') throw new Error('Configuração de homologação inválida.');
+const app=firebase.apps.length?firebase.app():firebase.initializeApp(cfg);
+const auth=app.auth(),db=app.firestore();
+async function enviarPedido(){
+ const btn=document.getElementById('btn'),msg=document.getElementById('msg');
+ btn.disabled=true;btn.textContent='Enviando...';msg.innerHTML='';
+ try{
+   let u=auth.currentUser;
+   if(!u){const c=await auth.signInAnonymously();u=c.user;}
+   const cliente=document.getElementById('cliente').value.trim();
+   const entrega=document.getElementById('entrega').value;
+   const valor=Number(document.getElementById('valor').value);
+   const endereco=document.getElementById('endereco').value.trim();
+   if(!cliente||!Number.isFinite(valor)||valor<=0) throw new Error('Preencha nome e valor corretamente.');
+   const ref=db.collection('franquias').doc(fid).collection('estabelecimentos').doc(loja).collection('pedidos').doc();
+   await ref.set({
+     numero:'PED-'+ref.id.slice(0,8).toUpperCase(),
+     cliente,entrega,valor,endereco,status:'Novo',
+     clienteUid:u.uid,franquiaId:fid,lojaId:loja,
+     criadoEm:firebase.firestore.FieldValue.serverTimestamp(),
+     origem:'cliente-homologacao'
+   });
+   msg.innerHTML='<div class="ok"><b>Pedido enviado com sucesso ✅</b><br>ID: '+ref.id+'</div>';
+ }catch(e){msg.innerHTML='<div class="bad"><b>Não foi possível enviar:</b> '+String(e.message||e)+'</div>';}
+ finally{btn.disabled=false;btn.textContent='Fazer pedido';}
+}
+</script>
+</body></html>
