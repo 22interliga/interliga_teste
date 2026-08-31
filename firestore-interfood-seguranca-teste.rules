@@ -72,6 +72,26 @@ service cloud.firestore {
         && request.resource.data.criadoEm == request.time;
     }
 
+    function clientePodeAtualizarPerfil(uid) {
+      return clienteCadastrado() && request.auth.uid == uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['nome','telefone','atualizadoEm'])
+        && request.resource.data.nome is string && request.resource.data.nome.size() >= 2 && request.resource.data.nome.size() <= 120
+        && request.resource.data.telefone is string && request.resource.data.telefone.size() <= 30
+        && request.resource.data.atualizadoEm == request.time;
+    }
+
+    function enderecoClienteValido() {
+      return request.resource.data.keys().hasOnly(['apelido','cep','logradouro','bairro','cidade','uf','complemento','criadoEm'])
+        && request.resource.data.apelido is string && request.resource.data.apelido.size() >= 2 && request.resource.data.apelido.size() <= 60
+        && request.resource.data.cep is string && request.resource.data.cep.size() <= 12
+        && request.resource.data.logradouro is string && request.resource.data.logradouro.size() >= 4 && request.resource.data.logradouro.size() <= 220
+        && request.resource.data.bairro is string && request.resource.data.bairro.size() <= 100
+        && request.resource.data.cidade is string && request.resource.data.cidade.size() >= 2 && request.resource.data.cidade.size() <= 100
+        && request.resource.data.uf is string && request.resource.data.uf.size() == 2
+        && request.resource.data.complemento is string && request.resource.data.complemento.size() <= 120
+        && request.resource.data.criadoEm == request.time;
+    }
+
     function clientePodeCriarPedido(fid, lojaId) {
       return signedIn() && (clienteAnonimo() || clienteCadastrado())
         && get(/databases/$(database)/documents/franquias/$(fid)/estabelecimentos/$(lojaId)).data.ativo == true
@@ -88,8 +108,17 @@ service cloud.firestore {
     match /clientes/{uid} {
       allow create: if clientePodeCriarPerfil(uid);
       allow read: if signedIn() && request.auth.uid == uid;
-      allow update, delete: if false;
+      allow update: if clientePodeAtualizarPerfil(uid);
+      allow delete: if false;
+
+      match /enderecos/{enderecoId} {
+        allow read: if clienteCadastrado() && request.auth.uid == uid;
+        allow create: if clienteCadastrado() && request.auth.uid == uid && enderecoClienteValido();
+        allow update: if false;
+        allow delete: if clienteCadastrado() && request.auth.uid == uid;
+      }
     }
+
     match /usuariosEstabelecimentos/{uid} {
       allow read: if (signedIn() && request.auth.uid == uid) || (franqueadoAtivo() && resource.data.franquiaId == minhaFranquiaFranqueado());
       allow update: if franqueadoPodeAlternarAcessoEstabelecimento();
