@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Diagnóstico pedidos — Interfood Homologação</title>
+<style>
+body{font-family:Arial,sans-serif;background:#07101f;color:#fff;margin:0;padding:24px}.box{max-width:900px;margin:auto;background:#101827;border:1px solid #2b3648;border-radius:14px;padding:20px}h1{margin-top:0}.ok{color:#62e993}.bad{color:#ff7188}.muted{color:#aab4c3}.row{padding:9px 0;border-bottom:1px solid #263246}.pedido{margin-top:12px;padding:12px;border:1px solid #2b3648;border-radius:10px}button{background:#ff6b00;color:#fff;border:0;border-radius:9px;padding:10px 14px;font-weight:700;cursor:pointer}
+</style>
+</head>
+<body>
+<div class="box">
+<h1>Diagnóstico de pedidos — Homologação</h1>
+<p class="muted">Leitura forçada diretamente do servidor Firestore.</p>
+<div id="out">Carregando...</div>
+<p><button onclick="location.reload()">Atualizar diagnóstico</button></p>
+</div>
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js"></script>
+<script src="firebase-interfood-config-teste.js?v=fbe5d193"></script>
+<script src="firebase-auth-interfood-teste.js?v=89df59c9"></script>
+<script>
+const out=document.getElementById('out');
+const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+async function run(){
+ try{
+  const {auth,db,projectId}=await InterfoodAuthTeste.iniciar();
+  await new Promise((resolve,reject)=>{const off=auth.onAuthStateChanged(u=>{off();u?resolve(u):reject(new Error('Sem sessão Firebase.'))},reject)});
+  const u=auth.currentUser;
+  const mapSnap=await db.collection('usuariosEstabelecimentos').doc(u.uid).get({source:'server'});
+  if(!mapSnap.exists) throw new Error('Mapeamento do estabelecimento não encontrado.');
+  const p=mapSnap.data()||{};
+  const caminho='franquias/'+p.franquiaId+'/estabelecimentos/'+p.lojaId+'/pedidos';
+  const lojaRef=db.collection('franquias').doc(p.franquiaId).collection('estabelecimentos').doc(p.lojaId);
+  const lojaSnap=await lojaRef.get({source:'server'});
+  if(!lojaSnap.exists) throw new Error('Documento da loja não encontrado em '+p.franquiaId+'/'+p.lojaId);
+  const pedSnap=await lojaRef.collection('pedidos').get({source:'server'});
+  let html='<div class="row"><b>Projeto:</b> '+esc(projectId)+'</div>'+
+   '<div class="row"><b>E-mail:</b> '+esc(u.email)+'</div>'+
+   '<div class="row"><b>UID:</b> '+esc(u.uid)+'</div>'+
+   '<div class="row"><b>Franquia:</b> '+esc(p.franquiaId)+'</div>'+
+   '<div class="row"><b>Loja ID:</b> '+esc(p.lojaId)+'</div>'+
+   '<div class="row"><b>Loja:</b> '+esc((lojaSnap.data()||{}).nome)+'</div>'+
+   '<div class="row"><b>Caminho consultado:</b> '+esc(caminho)+'</div>'+
+   '<div class="row"><b>Pedidos encontrados no servidor:</b> <span class="'+(pedSnap.size?'ok':'bad')+'">'+pedSnap.size+'</span></div>';
+  pedSnap.forEach(d=>{const x=d.data()||{};html+='<div class="pedido"><b>'+esc(d.id)+'</b> · '+esc(x.status)+' · R$ '+Number(x.valor||0).toFixed(2).replace('.',',')+' · '+esc(x.cliente)+'</div>'});
+  out.innerHTML=html;
+ }catch(e){out.innerHTML='<p class="bad"><b>ERRO:</b> '+esc(e.code||'')+' '+esc(e.message)+'</p>'}
+}
+run();
+</script>
+</body>
+</html>
