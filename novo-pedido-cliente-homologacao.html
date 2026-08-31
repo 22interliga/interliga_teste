@@ -4,7 +4,7 @@
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Novo pedido · Interfood Homologação</title>
 <style>
-:root{--p:#ff6b00;--bg:#07101f;--card:#101827;--bd:#2b3648;--muted:#aab4c3}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:#fff;font-family:Arial,sans-serif}.top{background:var(--p);padding:18px 20px;font-size:22px;font-weight:900}.wrap{max-width:720px;margin:auto;padding:20px}.notice,.card{border-radius:14px;padding:16px}.notice{border:1px solid #22c55e66;background:#22c55e18;color:#8bf0ad;margin-bottom:14px}.card{background:var(--card);border:1px solid var(--bd)}label{display:block;margin:13px 0 6px;font-size:13px;color:var(--muted)}input,select{width:100%;padding:12px;border-radius:9px;border:1px solid var(--bd);background:#0a1322;color:#fff;font-size:16px}.btn{width:100%;margin-top:18px;border:0;border-radius:10px;padding:13px;background:var(--p);color:#fff;font-weight:900;font-size:16px;cursor:pointer}.btn[disabled]{opacity:.55}.ok{margin-top:15px;color:#62e993}.bad{margin-top:15px;color:#ff7188}.small{font-size:12px;color:var(--muted)}
+:root{--p:#ff6b00;--bg:#07101f;--card:#101827;--bd:#2b3648;--muted:#aab4c3}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:#fff;font-family:Arial,sans-serif}.top{background:var(--p);padding:18px 20px;font-size:22px;font-weight:900}.wrap{max-width:760px;margin:auto;padding:20px}.notice,.card{border-radius:14px;padding:16px}.notice{border:1px solid #22c55e66;background:#22c55e18;color:#8bf0ad;margin-bottom:14px}.card{background:var(--card);border:1px solid var(--bd)}label{display:block;margin:13px 0 6px;font-size:13px;color:var(--muted)}input,select,textarea{width:100%;padding:12px;border-radius:9px;border:1px solid var(--bd);background:#0a1322;color:#fff;font-size:16px}textarea{min-height:82px;resize:vertical}.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.btn{width:100%;margin-top:18px;border:0;border-radius:10px;padding:13px;background:var(--p);color:#fff;font-weight:900;font-size:16px;cursor:pointer}.btn[disabled]{opacity:.55}.ok{margin-top:15px;color:#62e993}.bad{margin-top:15px;color:#ff7188}.small{font-size:12px;color:var(--muted)}a{color:#8fd0ff;font-weight:700}@media(max-width:650px){.grid{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
@@ -12,19 +12,20 @@
 <div class="wrap">
 <div class="notice">AMBIENTE DE HOMOLOGAÇÃO — este pedido é gravado no Firebase de teste, nunca na produção.</div>
 <div class="card">
-<h2 id="titulo">TESTE TESTE</h2>
+<h2 id="titulo">Estabelecimento</h2>
 <div class="small" id="destino"></div>
-<label>Nome do cliente</label><input id="cliente" value="Cliente Automático">
-<label>Tipo de entrega</label><select id="entrega"><option>Interfood</option><option>Retirada</option></select>
-<label>Valor do pedido</label><input id="valor" type="number" step="0.01" min="0.01" value="39.90">
-<label>Endereço</label><input id="endereco" value="Rua de Teste, 100">
+<label>Nome do cliente</label><input id="cliente" value="Cliente Automático" maxlength="120">
+<div class="grid"><div><label>Telefone</label><input id="telefone" value="(71) 99999-9999" maxlength="30"></div><div><label>Forma de pagamento</label><select id="pagamento"><option>Pix</option><option>Dinheiro</option><option>Cartão na entrega</option><option>Online</option></select></div></div>
+<div class="grid"><div><label>Tipo de entrega</label><select id="entrega" onchange="ajustarEntrega()"><option>Interfood</option><option>Retirada</option></select></div><div><label>Valor do pedido</label><input id="valor" type="number" step="0.01" min="0.01" max="100000" value="39.90"></div></div>
+<label>Endereço</label><input id="endereco" value="Rua de Teste, 100" maxlength="300">
+<label>Observações</label><textarea id="observacoes" maxlength="500" placeholder="Ex.: sem cebola, troco para R$ 50,00"></textarea>
 <button class="btn" id="btn" onclick="enviarPedido()">Fazer pedido</button>
 <div id="msg"></div>
 </div></div>
 <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js"></script>
-<script src="firebase-interfood-config-teste.js"></script>
+<script src="firebase-interfood-config-teste.js?v=7b9ac687"></script>
 <script>
 const q=new URLSearchParams(location.search);
 const fid=q.get('franquia')||'candeias';
@@ -36,6 +37,8 @@ const cfg=window.INTERFOOD_FIREBASE_TEST_CONFIG;
 if(!cfg||cfg.projectId==='interliga-mobilidade') throw new Error('Configuração de homologação inválida.');
 const app=firebase.apps.length?firebase.app():firebase.initializeApp(cfg);
 const auth=app.auth(),db=app.firestore();
+function esc(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
+function ajustarEntrega(){const retirada=document.getElementById('entrega').value==='Retirada';const e=document.getElementById('endereco');e.disabled=retirada;if(retirada)e.value='Retirada no estabelecimento';else if(e.value==='Retirada no estabelecimento')e.value='Rua de Teste, 100';}
 async function enviarPedido(){
  const btn=document.getElementById('btn'),msg=document.getElementById('msg');
  btn.disabled=true;btn.textContent='Enviando...';msg.innerHTML='';
@@ -43,20 +46,26 @@ async function enviarPedido(){
    let u=auth.currentUser;
    if(!u){const c=await auth.signInAnonymously();u=c.user;}
    const cliente=document.getElementById('cliente').value.trim();
+   const telefone=document.getElementById('telefone').value.trim();
    const entrega=document.getElementById('entrega').value;
    const valor=Number(document.getElementById('valor').value);
    const endereco=document.getElementById('endereco').value.trim();
-   if(!cliente||!Number.isFinite(valor)||valor<=0) throw new Error('Preencha nome e valor corretamente.');
+   const observacoes=document.getElementById('observacoes').value.trim();
+   const pagamento=document.getElementById('pagamento').value;
+   if(cliente.length<2||cliente.length>120) throw new Error('Informe o nome do cliente corretamente.');
+   if(!Number.isFinite(valor)||valor<=0||valor>100000) throw new Error('Informe um valor válido.');
+   if(entrega==='Interfood'&&!endereco) throw new Error('Informe o endereço de entrega.');
    const ref=db.collection('franquias').doc(fid).collection('estabelecimentos').doc(loja).collection('pedidos').doc();
+   const numero='PED-'+ref.id.slice(0,8).toUpperCase();
    await ref.set({
-     numero:'PED-'+ref.id.slice(0,8).toUpperCase(),
-     cliente,entrega,valor,endereco,status:'Novo',
+     numero,cliente,telefone,entrega,valor,endereco,observacoes,pagamento,status:'Novo',
      clienteUid:u.uid,franquiaId:fid,lojaId:loja,
      criadoEm:firebase.firestore.FieldValue.serverTimestamp(),
      origem:'cliente-homologacao'
    });
-   msg.innerHTML='<div class="ok"><b>Pedido enviado com sucesso ✅</b><br>ID: '+ref.id+'</div>';
- }catch(e){msg.innerHTML='<div class="bad"><b>Não foi possível enviar:</b> '+String(e.message||e)+'</div>';}
+   const rastreio='acompanhar-pedido-cliente-homologacao.html?franquia='+encodeURIComponent(fid)+'&loja='+encodeURIComponent(loja)+'&pedido='+encodeURIComponent(ref.id);
+   msg.innerHTML='<div class="ok"><b>Pedido enviado com sucesso ✅</b><br>Número: '+esc(numero)+'<br>ID: '+esc(ref.id)+'<br><br><a href="'+rastreio+'">Acompanhar este pedido</a></div>';
+ }catch(e){msg.innerHTML='<div class="bad"><b>Não foi possível enviar:</b> '+esc(e.message||e)+'</div>';}
  finally{btn.disabled=false;btn.textContent='Fazer pedido';}
 }
 </script>
