@@ -2,6 +2,7 @@ const {onRequest} = require('firebase-functions/v2/https');
 const admin = require('firebase-admin');
 
 const ALLOWED_ORIGIN = 'https://22interliga.github.io';
+const FUSO_OPERACAO = 'America/Bahia';
 
 function cors(req,res){
   const origin=req.get('origin');
@@ -14,6 +15,26 @@ function erro(msg,status){return Object.assign(new Error(msg),{status});}
 function coordValida(lat,lon){return Number.isFinite(Number(lat))&&Number(lat)>=-90&&Number(lat)<=90&&Number.isFinite(Number(lon))&&Number(lon)>=-180&&Number(lon)<=180;}
 function distanciaKm(a,b){const R=6371,rad=x=>x*Math.PI/180,dLat=rad(b.lat-a.lat),dLon=rad(b.lon-a.lon);const p=Math.sin(dLat/2)**2+Math.cos(rad(a.lat))*Math.cos(rad(b.lat))*Math.sin(dLon/2)**2;return 2*R*Math.asin(Math.sqrt(p));}
 function centavos(n){return Math.round(Number(n||0)*100);}
+function horarioMinutos(h){
+  const m=String(h||'').match(/^(\d{2}):(\d{2})$/);
+  if(!m)return null;
+  const hh=Number(m[1]),mm=Number(m[2]);
+  if(hh<0||hh>23||mm<0||mm>59)return null;
+  return hh*60+mm;
+}
+function agoraNoFusoMinutos(){
+  const partes=new Intl.DateTimeFormat('pt-BR',{timeZone:FUSO_OPERACAO,hour:'2-digit',minute:'2-digit',hour12:false}).formatToParts(new Date());
+  const hh=Number(partes.find(p=>p.type==='hour')?.value),mm=Number(partes.find(p=>p.type==='minute')?.value);
+  return hh*60+mm;
+}
+function lojaAbertaNoHorario(loja){
+  const abertura=horarioMinutos(loja.horarioAbertura),fechamento=horarioMinutos(loja.horarioFechamento);
+  if(abertura===null||fechamento===null)return {ok:false,motivo:'A loja ainda não configurou um horário de funcionamento válido.'};
+  if(abertura===fechamento)return {ok:true,vinteQuatroHoras:true};
+  const agora=agoraNoFusoMinutos();
+  const aberta=abertura<fechamento ? agora>=abertura&&agora<fechamento : agora>=abertura||agora<fechamento;
+  return {ok:aberta,abertura:String(loja.horarioAbertura),fechamento:String(loja.horarioFechamento),agora};
+}
 
 async function autenticarCliente(req){
   const h=req.get('authorization')||'';
@@ -47,6 +68,7 @@ exports.criarPedidoClienteSeguro = onRequest({region:'us-central1',timeoutSecond
     const franquiaId=String(body.franquiaId||'').trim(),lojaId=String(body.lojaId||'').trim(),entrega=String(body.entrega||'').trim(),pagamento=String(body.pagamento||'').trim(),enderecoId=String(body.enderecoId||'').trim(),observacoes=String(body.observacoes||'').trim().slice(0,500),itensEntrada=Array.isArray(body.itens)?body.itens:[];
     if(!franquiaId||!lojaId||!['Interfood','Retirada'].includes(entrega))throw erro('Dados do pedido inválidos.',400);if(!['Pix','Dinheiro','Cartão na entrega','Online'].includes(pagamento))throw erro('Forma de pagamento inválida.',400);if(!itensEntrada.length||itensEntrada.length>100)throw erro('Carrinho vazio ou inválido.',400);if(entrega==='Interfood'&&!enderecoId)throw erro('Selecione um endereço salvo e confirmado no mapa.',400);
     const db=admin.firestore(),lojaRef=db.collection('franquias').doc(franquiaId).collection('estabelecimentos').doc(lojaId),lojaSnap=await lojaRef.get();if(!lojaSnap.exists)throw erro('Estabelecimento não encontrado.',404);const loja=lojaSnap.data()||{};if(loja.ativo!==true||loja.aceitandoPedidos!==true)throw erro('Estabelecimento não está aceitando pedidos no momento.',409);
+    const horario=lojaAbertaNoHorario(loja);if(!horario.ok){if(horario.abertura&&horario.fechamento)throw erro('Loja fechada neste horário. Funcionamento: '+horario.abertura+' às '+horario.fechamento+'.',409);throw erro(horario.motivo||'Loja fora do horário de funcionamento.',409);}
     const itens=[];for(const item of itensEntrada){const produtoId=String(item?.produtoId||'').trim();if(!produtoId)throw erro('Produto inválido no carrinho.',400);const p=await lojaRef.collection('cardapio').doc(produtoId).get();if(!p.exists)throw erro('Um produto do carrinho não existe mais.',409);itens.push(selecionarPrecoProduto(p.data(),item));}
     const subtotalCent=itens.reduce((s,x)=>s+centavos(x.subtotal),0),taxaCent=entrega==='Interfood'?centavos(loja.taxaEntrega||0):0,totalCent=subtotalCent+taxaCent;if(subtotalCent<=0||totalCent>10000000)throw erro('Total do pedido inválido.',400);
     let distanciaEntregaKm=null,raioEntregaKm=null,enderecoValidado='Retirada no estabelecimento',localizacaoEntrega=null;
@@ -59,7 +81,7 @@ exports.criarPedidoClienteSeguro = onRequest({region:'us-central1',timeoutSecond
       if(distanciaEntregaKm>raio)throw erro('Endereço fora da área de entrega. Distância aproximada: '+distanciaEntregaKm.toFixed(2).replace('.',',')+' km; limite da loja: '+raio.toFixed(1).replace('.',',')+' km.',422);
       localizacaoEntrega={enderecoId,latitude:geoCliente.lat,longitude:geoCliente.lon,metodo:'ponto-confirmado'};
     }
-    const ref=lojaRef.collection('pedidos').doc(),numero='PED-'+ref.id.slice(0,8).toUpperCase();const pedido={numero,cliente:String(perfil.nome||'').slice(0,120),telefone:String(perfil.telefone||'').slice(0,30),entrega,subtotalProdutos:subtotalCent/100,taxaEntrega:taxaCent/100,valor:totalCent/100,itens,endereco:enderecoValidado,observacoes,pagamento,status:'Novo',clienteUid:uid,franquiaId,lojaId,criadoEm:admin.firestore.FieldValue.serverTimestamp(),origem:'cliente-homologacao-backend-coordenadas',calculadoNoServidor:true,distanciaEntregaKm,raioEntregaKm,localizacaoEntrega};await ref.set(pedido);
-    return res.status(200).json({ok:true,pedidoId:ref.id,numero,subtotalProdutos:subtotalCent/100,taxaEntrega:taxaCent/100,valor:totalCent/100,distanciaEntregaKm,raioEntregaKm,metodoArea:entrega==='Interfood'?'coordenadas-confirmadas':'retirada'});
+    const ref=lojaRef.collection('pedidos').doc(),numero='PED-'+ref.id.slice(0,8).toUpperCase();const pedido={numero,cliente:String(perfil.nome||'').slice(0,120),telefone:String(perfil.telefone||'').slice(0,30),entrega,subtotalProdutos:subtotalCent/100,taxaEntrega:taxaCent/100,valor:totalCent/100,itens,endereco:enderecoValidado,observacoes,pagamento,status:'Novo',clienteUid:uid,franquiaId,lojaId,criadoEm:admin.firestore.FieldValue.serverTimestamp(),origem:'cliente-homologacao-backend-coordenadas',calculadoNoServidor:true,distanciaEntregaKm,raioEntregaKm,localizacaoEntrega,horarioValidado:true,fusoHorario:FUSO_OPERACAO};await ref.set(pedido);
+    return res.status(200).json({ok:true,pedidoId:ref.id,numero,subtotalProdutos:subtotalCent/100,taxaEntrega:taxaCent/100,valor:totalCent/100,distanciaEntregaKm,raioEntregaKm,metodoArea:entrega==='Interfood'?'coordenadas-confirmadas':'retirada',horarioValidado:true});
   }catch(e){console.error('criarPedidoClienteSeguro coordenadas',e);const status=Number(e?.status)||500;return res.status(status).json({error:status>=500?'Não foi possível concluir o pedido agora.':String(e.message||e)});}
 });
