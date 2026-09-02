@@ -27,6 +27,14 @@ service firebase.storage {
         && (tipo == 'logo' || tipo == 'capa');
     }
 
+    match /interfood/{fid}/estabelecimentos/{lojaId}/produtos/{produtoId}/{arquivo} {
+      allow read: if true;
+      allow create, update: if souDonoDaLoja(fid, lojaId)
+        && request.resource.size <= 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+      allow delete: if souDonoDaLoja(fid, lojaId);
+    }
+
     match /{allPaths=**} {
       allow read, write: if false;
     }
