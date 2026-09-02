@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Teste Firestore direto · Interfood Homologação</title>
+<style>
+:root{--p:#ff6b00;--bg:#07101f;--card:#101827;--bd:#2b3648;--muted:#aab4c3;--ok:#71ef9b;--bad:#ff7f91}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:#fff;font-family:Arial,sans-serif}.top{background:var(--p);padding:18px 20px;font-size:21px;font-weight:900}.wrap{max-width:760px;margin:auto;padding:20px}.card{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:18px}.notice{border:1px solid #facc1566;background:#facc1512;color:#ffe686;border-radius:12px;padding:14px;margin-bottom:14px}.muted{color:var(--muted);font-size:13px}.linha{padding:10px 0;border-bottom:1px solid #263247}button{width:100%;margin-top:14px;border:0;border-radius:10px;padding:14px;background:var(--p);color:#fff;font-weight:900;font-size:16px;cursor:pointer}button:disabled{opacity:.5}.sec{background:#334155}.ok,.bad{margin-top:15px;padding:13px;border-radius:10px}.ok{color:var(--ok);border:1px solid #22c55e66;background:#22c55e12}.bad{color:var(--bad);border:1px solid #ff718866;background:#ff718812}code{word-break:break-all}</style>
+</head>
+<body>
+<div class="top">Interfood · Teste de Criação Direta no Firestore</div>
+<div class="wrap">
+<div class="notice"><b>HOMOLOGAÇÃO.</b> Este teste tenta burlar o backend seguro e gravar um pedido diretamente do navegador no Firestore. O resultado correto é <b>permission-denied</b>.</div>
+<div class="card">
+<h2>Teste de bloqueio</h2>
+<div class="linha"><div class="muted">Cliente autenticado</div><div id="cliente">Validando...</div></div>
+<div class="linha"><div class="muted">Destino tentado</div><div id="destino"></div></div>
+<button id="btn" disabled>Executar tentativa direta</button>
+<button class="sec" onclick="location.href='painel-cliente-interfood-homologacao.html'">Voltar ao painel do cliente</button>
+<div id="msg"></div>
+</div></div>
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js"></script>
+<script src="firebase-interfood-config-teste.js?v=7b9ac687"></script>
+<script>
+const cfg=window.INTERFOOD_FIREBASE_TEST_CONFIG;if(!cfg||cfg.projectId==='interliga-mobilidade')throw Error('Configuração de homologação inválida.');
+const q=new URLSearchParams(location.search),fid=q.get('franquia')||'candeias',lojaId=q.get('loja')||'ljc6GjET9wAoBBdQNE8g';
+const appName='interligaClienteHomologacao',app=firebase.apps.find(a=>a.name===appName)||firebase.initializeApp(cfg,appName),auth=app.auth(),db=app.firestore();
+const $=id=>document.getElementById(id),esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+$('destino').textContent='franquias/'+fid+'/estabelecimentos/'+lojaId+'/pedidos/{teste}';
+auth.onAuthStateChanged(async u=>{
+  if(!u||u.isAnonymous){const destino=location.pathname.split('/').pop()+location.search;location.href='login-cliente-firebase-teste.html?destino='+encodeURIComponent(destino);return}
+  try{const s=await db.collection('clientes').doc(u.uid).get();if(!s.exists)throw Error('Perfil do cliente não encontrado.');const p=s.data()||{};if(p.ativo!==true||p.perfil!=='cliente')throw Error('Cliente sem acesso ativo.');$('cliente').textContent=(p.nome||u.email)+' · '+u.email;$('btn').disabled=false}catch(e){$('msg').innerHTML='<div class="bad">'+esc(e.message||e)+'</div>'}
+});
+$('btn').onclick=async()=>{
+  const u=auth.currentUser;if(!u)return;const btn=$('btn');btn.disabled=true;btn.textContent='Tentando gravar direto no Firestore...';$('msg').innerHTML='';
+  const id='ATAQUE-'+Date.now();
+  const ref=db.collection('franquias').doc(fid).collection('estabelecimentos').doc(lojaId).collection('pedidos').doc(id);
+  const payload={numero:id,status:'Novo',clienteUid:u.uid,clienteNome:'TESTE DE SEGURANÇA',valor:0.01,subtotalProdutos:0.01,taxaEntrega:0,origem:'tentativa-direta-firestore-homologacao',criadoEm:firebase.firestore.FieldValue.serverTimestamp(),itens:[{nome:'PEDIDO FALSO',quantidade:1,unitario:0.01,subtotal:0.01}]};
+  try{
+    await ref.set(payload);
+    $('msg').innerHTML='<div class="bad"><b>FALHA DE SEGURANÇA ❌</b><br><br>O navegador conseguiu criar diretamente o documento <b>'+esc(id)+'</b> no Firestore. Não avançar até corrigir as regras.</div>';
+  }catch(e){
+    const code=String(e&&e.code||'');
+    const denied=code.includes('permission-denied')||String(e&&e.message||'').toLowerCase().includes('missing or insufficient permissions');
+    $('msg').innerHTML='<div class="'+(denied?'ok':'bad')+'"><b>'+(denied?'PROTEÇÃO CONFIRMADA ✅':'TESTE INCONCLUSIVO ⚠️')+'</b><br><br>Código retornado: <b>'+esc(code||'sem código')+'</b><br>Mensagem: '+esc(e&&e.message||e)+'<br><br>'+(denied?'As regras do Firestore bloquearam a criação direta do pedido. O navegador não conseguiu pular o backend seguro.':'O erro não foi o bloqueio esperado de permissão. Precisamos revisar antes de considerar validado.')+'</div>';
+  }finally{btn.disabled=false;btn.textContent='Executar tentativa novamente'}
+};
+</script>
+</body></html>
