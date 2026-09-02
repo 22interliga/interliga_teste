@@ -1,0 +1,34 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function vinculoEstabelecimento() {
+      return firestore.get(/databases/(default)/documents/usuariosEstabelecimentos/$(request.auth.uid));
+    }
+
+    function souDonoDaLoja(fid, lojaId) {
+      return signedIn()
+        && vinculoEstabelecimento().data.perfil == 'estabelecimento'
+        && vinculoEstabelecimento().data.ativo == true
+        && vinculoEstabelecimento().data.franquiaId == fid
+        && vinculoEstabelecimento().data.lojaId == lojaId;
+    }
+
+    match /interfood/{fid}/estabelecimentos/{lojaId}/{tipo}/{arquivo} {
+      allow read: if true;
+      allow create, update: if souDonoDaLoja(fid, lojaId)
+        && (tipo == 'logo' || tipo == 'capa')
+        && request.resource.size <= 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+      allow delete: if souDonoDaLoja(fid, lojaId)
+        && (tipo == 'logo' || tipo == 'capa');
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
