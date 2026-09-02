@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Teste de segurança de preço · Interfood Homologação</title>
+<style>
+:root{--p:#ff6b00;--bg:#07101f;--card:#101827;--bd:#2b3648;--muted:#aab4c3;--ok:#71ef9b;--bad:#ff7f91}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:#fff;font-family:Arial,sans-serif}.top{background:var(--p);padding:18px 20px;font-size:21px;font-weight:900}.wrap{max-width:760px;margin:auto;padding:20px}.card{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:18px}.notice{border:1px solid #facc1566;background:#facc1512;color:#ffe686;border-radius:12px;padding:14px;margin-bottom:14px}.linha{padding:10px 0;border-bottom:1px solid #263247}.muted{color:var(--muted);font-size:13px}.valor{font-size:22px;font-weight:900}.fake{color:#ff9aaa}.server{color:var(--ok)}button{width:100%;margin-top:14px;border:0;border-radius:10px;padding:14px;background:var(--p);color:#fff;font-weight:900;font-size:16px;cursor:pointer}button:disabled{opacity:.5}.sec{background:#334155}.ok,.bad{margin-top:15px;padding:13px;border-radius:10px}.ok{color:var(--ok);border:1px solid #22c55e66;background:#22c55e12}.bad{color:var(--bad);border:1px solid #ff718866;background:#ff718812}code{word-break:break-all}</style>
+</head>
+<body>
+<div class="top">Interfood · Teste de Segurança de Preço</div>
+<div class="wrap">
+<div class="notice"><b>HOMOLOGAÇÃO.</b> Este teste cria um pedido real apenas no ambiente de testes. O navegador enviará valores falsos de R$ 0,01, mas o servidor deve ignorá-los e recalcular tudo pelo cardápio salvo no Firestore.</div>
+<div class="card">
+<h2>Manipulação simulada</h2>
+<div class="linha"><div class="muted">Cliente</div><div id="cliente">Validando...</div></div>
+<div class="linha"><div class="muted">Loja</div><div id="lojaNome">Carregando...</div></div>
+<div class="linha"><div class="muted">Produto escolhido automaticamente</div><div id="produto">Carregando...</div></div>
+<div class="linha"><div class="muted">Preço real estimado pelo cardápio</div><div class="valor" id="real">—</div></div>
+<div class="linha"><div class="muted">Preço adulterado que será enviado pelo navegador</div><div class="valor fake">R$ 0,01</div></div>
+<button id="btn" disabled>Executar teste de manipulação</button>
+<button class="sec" onclick="location.href='painel-cliente-interfood-homologacao.html'">Voltar ao painel do cliente</button>
+<div id="msg"></div>
+</div></div>
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script><script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script><script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js"></script><script src="firebase-interfood-config-teste.js?v=7b9ac687"></script>
+<script>
+const cfg=window.INTERFOOD_FIREBASE_TEST_CONFIG;if(!cfg||cfg.projectId==='interliga-mobilidade')throw Error('Configuração de homologação inválida.');
+const q=new URLSearchParams(location.search),fid=q.get('franquia')||'candeias',lojaId=q.get('loja')||'ljc6GjET9wAoBBdQNE8g';
+const appName='interligaClienteHomologacao',app=firebase.apps.find(a=>a.name===appName)||firebase.initializeApp(cfg,appName),auth=app.auth(),db=app.firestore();
+const lojaRef=db.collection('franquias').doc(fid).collection('estabelecimentos').doc(lojaId),ENDPOINT='https://us-central1-interliga-homologacao-eb0f2.cloudfunctions.net/criarPedidoClienteSeguro';
+const $=id=>document.getElementById(id),money=n=>Number(n||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'}),esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+let teste=null;
+function montarItem(id,p){
+  const variacoes=(Array.isArray(p.variacoes)?p.variacoes:[]).filter(v=>v&&v.ativo!==false);
+  const variacao=variacoes.length?variacoes[0]:null;
+  let real=Number(variacao?variacao.preco:p.preco||0),adicionais=[];
+  const grupos=Array.isArray(p.gruposAdicionais)?p.gruposAdicionais:[];
+  for(const g of grupos){
+    const opcoes=(Array.isArray(g?.opcoes)?g.opcoes:[]).filter(o=>o&&o.ativo!==false);
+    const min=Math.max(0,Number(g?.min||0));
+    for(const op of opcoes.slice(0,min)){adicionais.push({grupo:String(g.nome||''),nome:String(op.nome||''),preco:0});real+=Number(op.preco||0)}
+  }
+  return {item:{produtoId:id,nome:String(p.nome||''),preco:0.01,unitario:0.01,subtotal:0.01,variacao:variacao?{nome:String(variacao.nome||''),preco:0.01}:null,adicionais,quantidade:1},real};
+}
+async function preparar(u){
+  const [perfilSnap,lojaSnap,prodSnap,endSnap]=await Promise.all([
+    db.collection('clientes').doc(u.uid).get(),lojaRef.get({source:'server'}),lojaRef.collection('cardapio').get(),db.collection('clientes').doc(u.uid).collection('enderecos').get()
+  ]);
+  if(!perfilSnap.exists)throw Error('Perfil do cliente não encontrado.');const perfil=perfilSnap.data()||{};if(perfil.ativo!==true||perfil.perfil!=='cliente')throw Error('Cliente sem acesso ativo.');
+  if(!lojaSnap.exists)throw Error('Loja não encontrada.');const loja=lojaSnap.data()||{};
+  const produtos=[];prodSnap.forEach(d=>{const p=d.data()||{};if(p.ativo!==false)produtos.push([d.id,p])});if(!produtos.length)throw Error('Nenhum produto ativo para testar.');
+  let escolhido=null;for(const [id,p] of produtos){try{const t=montarItem(id,p);if(Number.isFinite(t.real)&&t.real>0){escolhido={id,p,...t};break}}catch(e){}}
+  if(!escolhido)throw Error('Não encontrei produto válido para o teste.');
+  let endereco=null;for(const d of endSnap.docs){const x=d.data()||{};if(x.principal===true&&Number.isFinite(Number(x.latitude))&&Number.isFinite(Number(x.longitude))){endereco={id:d.id,...x};break}}
+  if(!endereco){for(const d of endSnap.docs){const x=d.data()||{};if(Number.isFinite(Number(x.latitude))&&Number.isFinite(Number(x.longitude))){endereco={id:d.id,...x};break}}}
+  if(!endereco)throw Error('Nenhum endereço do cliente com ponto confirmado no mapa.');
+  $('cliente').textContent=perfil.nome||u.email;$('lojaNome').textContent=loja.nome||lojaId;$('produto').textContent=escolhido.p.nome||escolhido.id;$('real').textContent=money(escolhido.real);
+  teste={perfil,loja,endereco,item:escolhido.item,real:escolhido.real};$('btn').disabled=false;
+}
+auth.onAuthStateChanged(async u=>{if(!u||u.isAnonymous){const destino=location.pathname.split('/').pop()+location.search;location.href='login-cliente-firebase-teste.html?destino='+encodeURIComponent(destino);return}try{await preparar(u)}catch(e){$('msg').innerHTML='<div class="bad">'+esc(e.message||e)+'</div>'}});
+$('btn').onclick=async()=>{
+  const u=auth.currentUser;if(!u||!teste)return;const btn=$('btn');btn.disabled=true;btn.textContent='Enviando preço adulterado...';$('msg').innerHTML='';
+  try{
+    const token=await u.getIdToken();
+    const payload={franquiaId:fid,lojaId,entrega:'Interfood',pagamento:'Pix',enderecoId:teste.endereco.id,endereco:'PREÇO ADULTERADO - TESTE HOMOLOGAÇÃO',observacoes:'TESTE SEGURANÇA: navegador tentou forçar produto por R$ 0,01',subtotalProdutos:0.01,taxaEntrega:0,valor:0.01,itens:[teste.item]};
+    const r=await fetch(ENDPOINT,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},body:JSON.stringify(payload)});const data=await r.json().catch(()=>({}));if(!r.ok)throw Error(data.error||'Servidor recusou o teste.');
+    const protegido=Math.abs(Number(data.subtotalProdutos)-0.01)>0.001;
+    $('msg').innerHTML='<div class="'+(protegido?'ok':'bad')+'"><b>'+(protegido?'PROTEÇÃO CONFIRMADA ✅':'FALHA DE SEGURANÇA ❌')+'</b><br><br>Preço falsificado enviado: <b>R$ 0,01</b><br>Subtotal confirmado pelo servidor: <b>'+money(data.subtotalProdutos)+'</b><br>Taxa confirmada pelo servidor: <b>'+money(data.taxaEntrega)+'</b><br>Total confirmado pelo servidor: <b>'+money(data.valor)+'</b><br>Pedido: <b>'+esc(data.numero||'')+'</b>'+(data.distanciaEntregaKm!=null?'<br>Distância validada: <b>'+Number(data.distanciaEntregaKm).toFixed(2).replace('.',',')+' km</b>':'')+'<br><br>'+(protegido?'O backend ignorou os preços adulterados enviados pelo navegador e recalculou o pedido pelo cardápio do servidor.':'O servidor aceitou o valor adulterado. Não avançar até corrigir.')+'</div>';
+  }catch(e){$('msg').innerHTML='<div class="bad"><b>Teste não concluído:</b> '+esc(e.message||e)+'</div>'}finally{btn.disabled=false;btn.textContent='Executar teste novamente'}
+};
+</script>
+</body></html>
