@@ -48,6 +48,28 @@ function normalizarEnderecoBusca(endereco) {
     .trim();
 }
 
+function extrairCep(endereco) {
+  const texto = String(endereco || '');
+  const aposCep = texto.match(/\bcep\b\s*[:.-]?\s*([\d\s.,-]{8,14})/i);
+  if (aposCep) {
+    const digitos = aposCep[1].replace(/\D/g, '').slice(0, 8);
+    if (digitos.length === 8) return digitos;
+  }
+  const candidatos = texto.match(/\d[\d\s.,-]{6,12}\d/g) || [];
+  for (const candidato of candidatos.reverse()) {
+    const digitos = candidato.replace(/\D/g, '');
+    if (digitos.length === 8) return digitos;
+  }
+  return '';
+}
+
+function extrairNumero(endereco) {
+  const base = normalizarEnderecoBusca(endereco);
+  const primeiraParte = base.split(',')[0] || '';
+  const match = primeiraParte.match(/\b(\d{1,6}[a-zA-Z]?)\b(?!.*\b\d{1,6}[a-zA-Z]?\b)/);
+  return match ? match[1] : '';
+}
+
 function variantesEndereco(endereco) {
   const base = normalizarEnderecoBusca(endereco);
   const semComplemento = base
@@ -75,9 +97,40 @@ function esperar(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+async function consultarViaCep(cep, numero) {
+  if (!/^\d{8}$/.test(cep)) return [];
+  try {
+    const r = await fetch(`https://viacep.com.br/ws/${cep}/json/`, {
+      headers: {'User-Agent': 'Interliga-Homologacao/1.0'}
+    });
+    if (!r.ok) return [];
+    const d = await r.json();
+    if (!d || d.erro === true) return [];
+
+    const rua = String(d.logradouro || '').trim();
+    const bairro = String(d.bairro || '').trim();
+    const cidade = String(d.localidade || '').trim();
+    const uf = String(d.uf || '').trim();
+    const cepFmt = String(d.cep || cep).trim();
+    const base = [rua, bairro, cidade, uf, cepFmt, 'Brasil'].filter(Boolean).join(', ');
+    const comNumero = rua && numero
+      ? [rua + ', ' + numero, bairro, cidade, uf, cepFmt, 'Brasil'].filter(Boolean).join(', ')
+      : '';
+    const cepCidade = [cepFmt, cidade, uf, 'Brasil'].filter(Boolean).join(', ');
+    return [...new Set([comNumero, base, cepCidade].filter(Boolean).map(normalizarEnderecoBusca))];
+  } catch (e) {
+    console.warn('ViaCEP indisponivel', {cep, erro: String(e?.message || e)});
+    return [];
+  }
+}
+
 async function geocodificarEndereco(endereco, origem) {
   const rotulo = origem === 'loja' ? 'da loja' : 'do cliente';
-  const tentativas = variantesEndereco(endereco);
+  const cep = extrairCep(endereco);
+  const numero = extrairNumero(endereco);
+  const viaCep = cep ? await consultarViaCep(cep, numero) : [];
+  const tentativas = [...new Set([...viaCep, ...variantesEndereco(endereco)])];
+
   if (!tentativas.length) {
     throw Object.assign(new Error(`Endereço ${rotulo} insuficiente para validação.`), {status: 400});
   }
@@ -117,12 +170,14 @@ async function geocodificarEndereco(endereco, origem) {
       lon,
       exibicao: String(arr[0].display_name || '').slice(0, 300),
       consultaUsada: q,
-      tentativa: i + 1
+      tentativa: i + 1,
+      cepUsado: cep || null
     };
   }
 
-  console.warn('Endereco nao localizado', {origem, endereco, tentativas, ultimoStatus});
-  throw Object.assign(new Error(`Não foi possível localizar o endereço ${rotulo} no mapa. Confira rua, número, bairro, cidade, UF e CEP.`), {status: 422});
+  console.warn('Endereco nao localizado', {origem, endereco, cep, numero, tentativas, ultimoStatus});
+  const dicaCep = cep ? ` O CEP ${cep.slice(0, 5)}-${cep.slice(5)} também foi consultado.` : ' Inclua também o CEP.';
+  throw Object.assign(new Error(`Não foi possível localizar o endereço ${rotulo} no mapa.${dicaCep}`), {status: 422});
 }
 
 function distanciaKm(a, b) {
