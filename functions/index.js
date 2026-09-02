@@ -36,22 +36,93 @@ async function autenticarCliente(req) {
   return {uid: decoded.uid, perfil};
 }
 
-async function geocodificarEndereco(endereco) {
-  const q = String(endereco || '').trim();
-  if (q.length < 6) throw Object.assign(new Error('Endereço insuficiente para validação.'), {status: 400});
-  const url = 'https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&countrycodes=br&q=' + encodeURIComponent(q);
-  const r = await fetch(url, {
-    headers: {
-      'User-Agent': 'Interliga-Homologacao/1.0',
-      'Accept-Language': 'pt-BR,pt;q=0.9'
+function normalizarEnderecoBusca(endereco) {
+  return String(endereco || '')
+    .replace(/\s*[-–—]\s*/g, ', ')
+    .replace(/\s*\/\s*/g, ', ')
+    .replace(/\s*,\s*/g, ', ')
+    .replace(/\s+/g, ' ')
+    .replace(/,+/g, ',')
+    .trim()
+    .replace(/^,|,$/g, '')
+    .trim();
+}
+
+function variantesEndereco(endereco) {
+  const base = normalizarEnderecoBusca(endereco);
+  const semComplemento = base
+    .replace(/,?\s*(ap(?:to|artamento)?|bloco|casa|fundos|loja|sala)\s*[\w-]+.*$/i, '')
+    .trim();
+  const semNumero = semComplemento
+    .replace(/\b(n[ºo°.]?\s*)?\d+[a-zA-Z]?\b(?=\s*,)/i, '')
+    .replace(/,\s*,/g, ',')
+    .replace(/\s+,/g, ',')
+    .trim();
+
+  const candidatas = [
+    base,
+    `${base}, Brasil`,
+    semComplemento,
+    `${semComplemento}, Brasil`,
+    semNumero,
+    `${semNumero}, Brasil`
+  ];
+
+  return [...new Set(candidatas.map(x => normalizarEnderecoBusca(x)).filter(x => x.length >= 6))];
+}
+
+function esperar(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function geocodificarEndereco(endereco, origem) {
+  const rotulo = origem === 'loja' ? 'da loja' : 'do cliente';
+  const tentativas = variantesEndereco(endereco);
+  if (!tentativas.length) {
+    throw Object.assign(new Error(`Endereço ${rotulo} insuficiente para validação.`), {status: 400});
+  }
+
+  let ultimoStatus = null;
+  for (let i = 0; i < tentativas.length; i++) {
+    if (i > 0) await esperar(1100);
+    const q = tentativas[i];
+    const url = 'https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&addressdetails=1&countrycodes=br&q=' + encodeURIComponent(q);
+    let r;
+    try {
+      r = await fetch(url, {
+        headers: {
+          'User-Agent': 'Interliga-Homologacao/1.0',
+          'Accept-Language': 'pt-BR,pt;q=0.9'
+        }
+      });
+    } catch (e) {
+      console.error('Falha de rede no geocodificador', origem, q, e);
+      throw Object.assign(new Error(`Serviço de localização indisponível ao validar o endereço ${rotulo}.`), {status: 503});
     }
-  });
-  if (!r.ok) throw Object.assign(new Error('Serviço de localização indisponível no momento.'), {status: 503});
-  const arr = await r.json();
-  if (!Array.isArray(arr) || !arr.length) throw Object.assign(new Error('Não foi possível localizar este endereço no mapa.'), {status: 422});
-  const lat = Number(arr[0].lat), lon = Number(arr[0].lon);
-  if (!Number.isFinite(lat) || !Number.isFinite(lon)) throw Object.assign(new Error('Coordenadas inválidas para o endereço informado.'), {status: 422});
-  return {lat, lon, exibicao: String(arr[0].display_name || '').slice(0, 300)};
+
+    ultimoStatus = r.status;
+    if (r.status === 429) {
+      throw Object.assign(new Error('Serviço de localização temporariamente ocupado. Aguarde alguns segundos e tente novamente.'), {status: 503});
+    }
+    if (!r.ok) continue;
+
+    const arr = await r.json();
+    if (!Array.isArray(arr) || !arr.length) continue;
+    const lat = Number(arr[0].lat);
+    const lon = Number(arr[0].lon);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+
+    return {
+      lat,
+      lon,
+      exibicao: String(arr[0].display_name || '').slice(0, 300),
+      consultaUsada: q,
+      tentativa: i + 1
+    };
+  }
+
+  console.warn('Endereco nao localizado', {origem, endereco, tentativas, ultimoStatus});
+  throw Object.assign(new Error(`Não foi possível localizar o endereço ${rotulo} no mapa. Confira rua, número, bairro, cidade, UF e CEP.`), {status: 422});
 }
 
 function distanciaKm(a, b) {
@@ -280,13 +351,18 @@ exports.criarPedidoClienteSeguro = onRequest(
       if (subtotalCent <= 0 || totalCent > 10_000_000) throw Object.assign(new Error('Total do pedido inválido.'), {status: 400});
 
       let distanciaEntregaKm = null;
+      let raioEntregaKm = null;
       let enderecoValidado = entrega === 'Retirada' ? 'Retirada no estabelecimento' : endereco;
       if (entrega === 'Interfood') {
         const raio = Number(loja.raioEntregaKm || 0);
         if (!Number.isFinite(raio) || raio <= 0) throw Object.assign(new Error('A loja ainda não configurou o raio de entrega.'), {status: 409});
+        raioEntregaKm = raio;
         const enderecoLoja = String(loja.enderecoLoja || '').trim();
         if (!enderecoLoja) throw Object.assign(new Error('A loja ainda não configurou um endereço válido.'), {status: 409});
-        const [geoLoja, geoCliente] = await Promise.all([geocodificarEndereco(enderecoLoja), geocodificarEndereco(endereco)]);
+
+        const geoLoja = await geocodificarEndereco(enderecoLoja, 'loja');
+        await esperar(1100);
+        const geoCliente = await geocodificarEndereco(endereco, 'cliente');
         distanciaEntregaKm = Number(distanciaKm(geoLoja, geoCliente).toFixed(2));
         if (distanciaEntregaKm > raio) throw Object.assign(new Error('Endereço fora da área de entrega. Distância aproximada: ' + distanciaEntregaKm.toFixed(2).replace('.', ',') + ' km; limite da loja: ' + raio.toFixed(1).replace('.', ',') + ' km.'), {status: 422});
       }
@@ -312,7 +388,8 @@ exports.criarPedidoClienteSeguro = onRequest(
         criadoEm: admin.firestore.FieldValue.serverTimestamp(),
         origem: 'cliente-homologacao-backend',
         calculadoNoServidor: true,
-        distanciaEntregaKm
+        distanciaEntregaKm,
+        raioEntregaKm
       };
       await ref.set(pedido);
       return res.status(200).json({
@@ -322,7 +399,8 @@ exports.criarPedidoClienteSeguro = onRequest(
         subtotalProdutos: subtotalCent / 100,
         taxaEntrega: taxaCent / 100,
         valor: totalCent / 100,
-        distanciaEntregaKm
+        distanciaEntregaKm,
+        raioEntregaKm
       });
     } catch (e) {
       console.error('criarPedidoClienteSeguro', e);
