@@ -1,3 +1,3 @@
 const base = require('./index');
-const coordenadas = require('./pedido-coordenadas');
-module.exports = Object.assign({}, base, coordenadas);
+const seguro = require('./pedido-coordenadas-adapter');
+module.exports = Object.assign({}, base, seguro);
