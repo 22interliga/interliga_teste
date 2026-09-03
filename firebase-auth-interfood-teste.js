@@ -44,4 +44,9 @@
     try{const {auth}=await iniciar();await auth.signOut()}finally{sessionStorage.removeItem('interliga_sessao_estabelecimento_firebase')}
   }
   window.InterfoodAuthTeste={validar,iniciar,login,sair};
+  if(location.pathname.endsWith('/cardapio-estabelecimento-homologacao.html')){
+    const s=document.createElement('script');
+    s.src='cardapio-categorias-integradas-homologacao.js?v=7a5db208';
+    document.head.appendChild(s);
+  }
 })();
