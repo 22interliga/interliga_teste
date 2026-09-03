@@ -46,7 +46,12 @@
   window.InterfoodAuthTeste={validar,iniciar,login,sair};
   if(location.pathname.endsWith('/cardapio-estabelecimento-homologacao.html')){
     const s=document.createElement('script');
-    s.src='cardapio-categorias-integradas-homologacao.js?v=7a5db208';
+    s.src='cardapio-categorias-integradas-homologacao.js?v=d3eb6d32';
+    document.head.appendChild(s);
+  }
+  if(/\/importar-cardapio-(imagem|arquivo)/.test(location.pathname)){
+    const s=document.createElement('script');
+    s.src='categorias-importacao-cardapio-homologacao.js?v=8ebd2afa';
     document.head.appendChild(s);
   }
 })();
