@@ -65,6 +65,7 @@ exports.registrarPushInterfood=onRequest({region:'us-central1',timeoutSeconds:30
       ativo:true,
       atualizadoEm:admin.firestore.FieldValue.serverTimestamp()
     },{merge:true});
+    console.log('PUSH_REGISTRO_OK',{uid:decoded.uid,role:String(role),franquiaId:String(franquiaId||''),lojaId:String(lojaId||'')});
     return res.json({ok:true});
   }catch(e){
     console.error('registrarPushInterfood',e);
@@ -91,23 +92,34 @@ async function carregarTokens(filtros){
   let q=admin.firestore().collection(TOKENS).where('ativo','==',true);
   Object.entries(filtros).forEach(([k,v])=>{q=q.where(k,'==',v)});
   const s=await q.get();
-  return s.docs.map(d=>({ref:d.ref,...d.data()})).filter(x=>x.token);
+  const tokens=s.docs.map(d=>({ref:d.ref,...d.data()})).filter(x=>x.token);
+  console.log('PUSH_TOKENS',{filtros,quantidade:tokens.length});
+  return tokens;
 }
 
 async function enviar(tokens,data){
-  if(!tokens.length)return;
+  if(!tokens.length){
+    console.warn('PUSH_SEM_TOKENS',{tag:data&&data.tag||''});
+    return {sucesso:0,falha:0};
+  }
   const unicos=[];const vistos=new Set();
   for(const t of tokens){if(!vistos.has(t.token)){vistos.add(t.token);unicos.push(t)}}
+  let sucesso=0,falha=0;
   for(let i=0;i<unicos.length;i+=500){
     const lote=unicos.slice(i,i+500);
     const r=await admin.messaging().sendEachForMulticast({tokens:lote.map(x=>x.token),data});
+    sucesso+=Number(r.successCount||0);
+    falha+=Number(r.failureCount||0);
     const apagar=[];
     r.responses.forEach((resp,idx)=>{
       const code=resp.error&&resp.error.code;
+      if(!resp.success)console.error('PUSH_FCM_ERRO',{code:code||'desconhecido',message:resp.error&&resp.error.message||''});
       if(!resp.success&&(code==='messaging/registration-token-not-registered'||code==='messaging/invalid-registration-token'))apagar.push(lote[idx].ref.delete());
     });
     await Promise.all(apagar);
   }
+  console.log('PUSH_FCM_RESULTADO',{tag:data&&data.tag||'',sucesso,falha});
+  return {sucesso,falha};
 }
 
 exports.notificarPedidoInterfood=onDocumentWritten({
@@ -124,6 +136,7 @@ exports.notificarPedidoInterfood=onDocumentWritten({
   const status=String(depois.status||'');
   const anterior=String(antes?.status||'');
   const numero=String(depois.numero||pedidoId);
+  console.log('PUSH_EVENTO',{pedidoId,franquiaId,lojaId,anterior,status,temClienteUid:Boolean(depois.clienteUid)});
 
   if(!antes&&(status==='Novo'||status==='Pendente')){
     const ts=await carregarTokens({role:'estabelecimento',franquiaId,lojaId});
@@ -147,6 +160,8 @@ exports.notificarPedidoInterfood=onDocumentWritten({
       tag:'interfood-cliente-'+pedidoId,
       url:'./acompanhar-pedido-cliente-homologacao.html?franquia='+encodeURIComponent(franquiaId)+'&loja='+encodeURIComponent(lojaId)+'&pedido='+encodeURIComponent(pedidoId)
     });
+  }else if(texto){
+    console.warn('PUSH_CLIENTE_SEM_UID',{pedidoId,status});
   }
 
   if(status==='Pronto'){
