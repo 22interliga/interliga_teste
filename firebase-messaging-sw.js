@@ -1,6 +1,6 @@
-/* Interfood · homologação · Firebase Cloud Messaging */
-importScripts('https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js');
-importScripts('https://www.gstatic.com/firebasejs/10.12.5/firebase-messaging-compat.js');
+/* Interfood · homologacao · Firebase Cloud Messaging */
+importScripts('https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js');
+importScripts('https://www.gstatic.com/firebasejs/10.13.2/firebase-messaging-compat.js');
 
 firebase.initializeApp({
   apiKey: 'AIzaSyBwMMsff1hV-6vDuQb3EK-EvSkkhYVBRFE',
@@ -21,21 +21,6 @@ function resolverUrl(valor) {
   }
 }
 
-messaging.onBackgroundMessage(payload => {
-  const d = payload && payload.data ? payload.data : {};
-  const title = d.title || 'Interfood';
-  const base = self.registration.scope;
-  const options = {
-    body: d.body || 'Há uma atualização no seu pedido.',
-    icon: resolverUrl(d.icon || './icon-192.png'),
-    badge: resolverUrl(d.badge || './icon-192.png'),
-    tag: d.tag || 'interfood-push',
-    renotify: true,
-    data: { url: resolverUrl(d.url || './') }
-  };
-  return self.registration.showNotification(title, options);
-});
-
 self.addEventListener('notificationclick', event => {
   event.notification.close();
   const destino = resolverUrl(event.notification.data && event.notification.data.url);
@@ -46,4 +31,18 @@ self.addEventListener('notificationclick', event => {
     }
     return clients.openWindow(destino);
   })());
+});
+
+messaging.onBackgroundMessage(payload => {
+  const d = payload && payload.data ? payload.data : {};
+  const title = d.title || 'Interfood';
+  const options = {
+    body: d.body || 'Ha uma atualizacao no seu pedido.',
+    icon: resolverUrl(d.icon || './icon-192.png'),
+    badge: resolverUrl(d.badge || './icon-192.png'),
+    tag: d.tag || 'interfood-push',
+    renotify: true,
+    data: { url: resolverUrl(d.url || './') }
+  };
+  return self.registration.showNotification(title, options);
 });
