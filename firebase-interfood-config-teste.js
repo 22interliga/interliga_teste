@@ -10,8 +10,7 @@ window.INTERFOOD_FIREBASE_TEST_CONFIG = {
 };
 
 // Chave publica Web Push (VAPID) da homologacao.
-// Permanecera vazia ate ser copiada do Firebase Console.
-window.INTERFOOD_VAPID_KEY = "";
+window.INTERFOOD_VAPID_KEY = "BOzk5NqpT7rKj3Ni5YDOcBcCvG3F8UFompPCchQH8JqDddL-MZ-OfTHGMvxul8cYWn0uWTuIUb6vVAMarBDEM20";
 
 // Trava: nunca aceitar o projeto de producao nesta camada de homologacao.
 window.INTERFOOD_FIREBASE_PRODUCTION_PROJECT_ID = "interliga-mobilidade";
