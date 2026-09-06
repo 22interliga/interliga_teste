@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Interfood · Diagnóstico Push · Homologação</title>
+  <style>
+    body{font-family:Arial,sans-serif;max-width:720px;margin:32px auto;padding:0 16px;background:#f6f7f9;color:#1f2937}
+    .card{background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:18px;margin:14px 0;box-shadow:0 2px 8px rgba(0,0,0,.05)}
+    h1{font-size:22px;margin:0 0 8px} .muted{color:#6b7280;font-size:14px}
+    button{border:0;border-radius:10px;padding:12px 16px;font-weight:700;cursor:pointer;margin:6px 6px 6px 0}
+    .primary{background:#111827;color:#fff}.secondary{background:#e5e7eb;color:#111827}
+    .ok{color:#087443;font-weight:700}.bad{color:#b42318;font-weight:700}.wait{color:#9a6700;font-weight:700}
+    pre{white-space:pre-wrap;word-break:break-word;background:#f3f4f6;padding:12px;border-radius:10px;font-size:13px}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Interfood · Diagnóstico de Push</h1>
+    <div class="muted">Homologação · este teste não altera pedidos e não toca produção.</div>
+  </div>
+  <div class="card">
+    <div id="perm">Permissão: verificando...</div>
+    <div id="sw">Service worker: verificando...</div>
+    <div id="sub">Push subscription: verificando...</div>
+  </div>
+  <div class="card">
+    <button class="primary" id="btn">🔔 Testar notificação do navegador</button>
+    <button class="secondary" id="refresh">Atualizar diagnóstico</button>
+    <p class="muted">Se a notificação deste botão não aparecer, o bloqueio está no Chrome/Windows. Se aparecer, o navegador consegue exibir notificações e seguimos investigando apenas o recebimento FCM em segundo plano.</p>
+    <pre id="log">Aguardando teste.</pre>
+  </div>
+<script>
+const $=id=>document.getElementById(id);
+function state(el,text,kind){el.textContent=text;el.className=kind||''}
+async function diag(){
+  state($('perm'),'Permissão: '+Notification.permission,Notification.permission==='granted'?'ok':'bad');
+  try{
+    const reg=await navigator.serviceWorker.getRegistration('./');
+    if(!reg){state($('sw'),'Service worker: não encontrado','bad');state($('sub'),'Push subscription: não verificada','wait');return null;}
+    state($('sw'),'Service worker: '+(reg.active?'ativo':'registrado, aguardando ativação'),reg.active?'ok':'wait');
+    const sub=await reg.pushManager.getSubscription();
+    state($('sub'),'Push subscription: '+(sub?'presente':'não encontrada'),sub?'ok':'bad');
+    return reg;
+  }catch(e){state($('sw'),'Service worker: erro','bad');$('log').textContent=String(e);return null;}
+}
+$('refresh').onclick=diag;
+$('btn').onclick=async()=>{
+  try{
+    if(Notification.permission!=='granted'){
+      const p=await Notification.requestPermission();
+      if(p!=='granted')throw new Error('Permissão de notificações não concedida.');
+    }
+    let reg=await navigator.serviceWorker.getRegistration('./');
+    if(!reg){
+      reg=await navigator.serviceWorker.register('./firebase-messaging-sw.js',{scope:'./'});
+      await navigator.serviceWorker.ready;
+      reg=await navigator.serviceWorker.getRegistration('./');
+    }
+    await reg.showNotification('Interfood · Teste de push',{body:'Se você está vendo isto, Chrome e Windows conseguem exibir notificações do Interfood.',tag:'interfood-diagnostico-'+Date.now(),icon:'./icon-192.png',badge:'./icon-192.png',data:{url:location.href}});
+    $('log').textContent='Teste enviado ao service worker. Verifique se a notificação apareceu na tela ou na Central de Notificações do Windows.';
+    await diag();
+  }catch(e){$('log').textContent='ERRO: '+(e&&e.message?e.message:String(e));}
+};
+diag();
+</script>
+</body>
+</html>
