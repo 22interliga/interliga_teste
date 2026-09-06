@@ -1,5 +1,8 @@
-/* Interfood · homologacao · Firebase Cloud Messaging */
-const INTERFOOD_SW_VERSION='2026.09.06.2';
+/* Interfood · homologação · Web Push/FCM
+   Service worker enxuto: recebe o evento Web Push diretamente e exibe a notificação.
+   Não depende do Firebase Messaging dentro do service worker. */
+
+const BUILD='2026.09.06.3';
 
 self.addEventListener('install', event => {
   event.waitUntil(self.skipWaiting());
@@ -9,27 +12,6 @@ self.addEventListener('activate', event => {
   event.waitUntil(self.clients.claim());
 });
 
-self.addEventListener('message', event => {
-  if(event.data && event.data.type==='INTERFOOD_SW_VERSION'){
-    event.source && event.source.postMessage({type:'INTERFOOD_SW_VERSION',version:INTERFOOD_SW_VERSION});
-  }
-  if(event.data && event.data.type==='SKIP_WAITING') self.skipWaiting();
-});
-
-importScripts('https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js');
-importScripts('https://www.gstatic.com/firebasejs/10.13.2/firebase-messaging-compat.js');
-
-firebase.initializeApp({
-  apiKey: 'AIzaSyBwMMsff1hV-6vDuQb3EK-EvSkkhYVBRFE',
-  authDomain: 'interliga-homologacao-eb0f2.firebaseapp.com',
-  projectId: 'interliga-homologacao-eb0f2',
-  storageBucket: 'interliga-homologacao-eb0f2.firebasestorage.app',
-  messagingSenderId: '997118774501',
-  appId: '1:997118774501:web:59f56ea39ed070986d180c'
-});
-
-const messaging = firebase.messaging();
-
 function resolverUrl(valor) {
   try {
     return new URL(valor || './', self.registration.scope).href;
@@ -37,6 +19,45 @@ function resolverUrl(valor) {
     return self.registration.scope;
   }
 }
+
+function extrairPayload(event) {
+  try {
+    if (!event.data) return {};
+    const p = event.data.json();
+    return p && typeof p === 'object' ? p : {};
+  } catch (_) {
+    try {
+      return { data: { body: event.data ? event.data.text() : '' } };
+    } catch (_) {
+      return {};
+    }
+  }
+}
+
+self.addEventListener('push', event => {
+  const payload = extrairPayload(event);
+  const d = payload.data || {};
+  const n = payload.notification || {};
+  const wo = payload.webpush || {};
+  const wn = wo.notification || {};
+  const fcm = payload.fcmOptions || wo.fcmOptions || {};
+
+  const title = d.title || n.title || wn.title || 'Interfood';
+  const body = d.body || n.body || wn.body || 'Há uma atualização no seu pedido.';
+  const icon = resolverUrl(d.icon || n.icon || wn.icon || './icon-192.png');
+  const badge = resolverUrl(d.badge || n.badge || wn.badge || './icon-192.png');
+  const tag = d.tag || n.tag || wn.tag || ('interfood-push-' + BUILD);
+  const url = resolverUrl(d.url || fcm.link || './');
+
+  event.waitUntil(self.registration.showNotification(title, {
+    body,
+    icon,
+    badge,
+    tag,
+    renotify: true,
+    data: { url }
+  }));
+});
 
 self.addEventListener('notificationclick', event => {
   event.notification.close();
@@ -48,19 +69,4 @@ self.addEventListener('notificationclick', event => {
     }
     return clients.openWindow(destino);
   })());
-});
-
-messaging.onBackgroundMessage(payload => {
-  const d = payload && payload.data ? payload.data : {};
-  const n = payload && payload.notification ? payload.notification : {};
-  const title = n.title || d.title || 'Interfood';
-  const options = {
-    body: n.body || d.body || 'Ha uma atualizacao no seu pedido.',
-    icon: n.icon || resolverUrl(d.icon || './icon-192.png'),
-    badge: resolverUrl(d.badge || './icon-192.png'),
-    tag: d.tag || 'interfood-push',
-    renotify: true,
-    data: { url: resolverUrl(d.url || './') }
-  };
-  return self.registration.showNotification(title, options);
 });
