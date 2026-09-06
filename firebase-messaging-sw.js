@@ -1,4 +1,21 @@
 /* Interfood · homologacao · Firebase Cloud Messaging */
+const INTERFOOD_SW_VERSION='2026.09.06.2';
+
+self.addEventListener('install', event => {
+  event.waitUntil(self.skipWaiting());
+});
+
+self.addEventListener('activate', event => {
+  event.waitUntil(self.clients.claim());
+});
+
+self.addEventListener('message', event => {
+  if(event.data && event.data.type==='INTERFOOD_SW_VERSION'){
+    event.source && event.source.postMessage({type:'INTERFOOD_SW_VERSION',version:INTERFOOD_SW_VERSION});
+  }
+  if(event.data && event.data.type==='SKIP_WAITING') self.skipWaiting();
+});
+
 importScripts('https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js');
 importScripts('https://www.gstatic.com/firebasejs/10.13.2/firebase-messaging-compat.js');
 
@@ -35,10 +52,11 @@ self.addEventListener('notificationclick', event => {
 
 messaging.onBackgroundMessage(payload => {
   const d = payload && payload.data ? payload.data : {};
-  const title = d.title || 'Interfood';
+  const n = payload && payload.notification ? payload.notification : {};
+  const title = n.title || d.title || 'Interfood';
   const options = {
-    body: d.body || 'Ha uma atualizacao no seu pedido.',
-    icon: resolverUrl(d.icon || './icon-192.png'),
+    body: n.body || d.body || 'Ha uma atualizacao no seu pedido.',
+    icon: n.icon || resolverUrl(d.icon || './icon-192.png'),
     badge: resolverUrl(d.badge || './icon-192.png'),
     tag: d.tag || 'interfood-push',
     renotify: true,
