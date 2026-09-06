@@ -5,6 +5,8 @@ const crypto = require('crypto');
 
 const ALLOWED_ORIGIN='https://22interliga.github.io';
 const TOKENS='pushTokensInterfood';
+const WEB_BASE='https://22interliga.github.io/interliga_teste/';
+const WEB_ICON=WEB_BASE+'icon-192.png';
 
 function cors(req,res){
   const origin=req.get('origin');
@@ -97,6 +99,10 @@ async function carregarTokens(filtros){
   return tokens;
 }
 
+function urlWeb(valor){
+  try{return new URL(String(valor||'./'),WEB_BASE).href}catch(_){return WEB_BASE}
+}
+
 async function enviar(tokens,data){
   if(!tokens.length){
     console.warn('PUSH_SEM_TOKENS',{tag:data&&data.tag||''});
@@ -105,9 +111,27 @@ async function enviar(tokens,data){
   const unicos=[];const vistos=new Set();
   for(const t of tokens){if(!vistos.has(t.token)){vistos.add(t.token);unicos.push(t)}}
   let sucesso=0,falha=0;
+  const destino=urlWeb(data&&data.url);
+  const titulo=String(data&&data.title||'Interfood');
+  const corpo=String(data&&data.body||'Há uma atualização no seu pedido.');
+  const tag=String(data&&data.tag||'interfood-push');
   for(let i=0;i<unicos.length;i+=500){
     const lote=unicos.slice(i,i+500);
-    const r=await admin.messaging().sendEachForMulticast({tokens:lote.map(x=>x.token),data});
+    const r=await admin.messaging().sendEachForMulticast({
+      tokens:lote.map(x=>x.token),
+      data:{...data,url:destino},
+      webpush:{
+        notification:{
+          title:titulo,
+          body:corpo,
+          icon:WEB_ICON,
+          badge:WEB_ICON,
+          tag,
+          renotify:true
+        },
+        fcmOptions:{link:destino}
+      }
+    });
     sucesso+=Number(r.successCount||0);
     falha+=Number(r.failureCount||0);
     const apagar=[];
@@ -118,7 +142,7 @@ async function enviar(tokens,data){
     });
     await Promise.all(apagar);
   }
-  console.log('PUSH_FCM_RESULTADO',{tag:data&&data.tag||'',sucesso,falha});
+  console.log('PUSH_FCM_RESULTADO',{tag,sucesso,falha});
   return {sucesso,falha};
 }
 
