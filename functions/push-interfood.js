@@ -7,6 +7,7 @@ const ALLOWED_ORIGIN='https://22interliga.github.io';
 const TOKENS='pushTokensInterfood';
 const WEB_BASE='https://22interliga.github.io/interliga_teste/';
 const WEB_ICON=WEB_BASE+'icon-192.png';
+const TOKEN_MAX_AGE_DAYS=90;
 
 function cors(req,res){
   const origin=req.get('origin');
@@ -114,12 +115,41 @@ function msgStatus(status){
   return mapa[status]||'';
 }
 
+function timestampMs(v){
+  try{
+    if(v&&typeof v.toMillis==='function')return v.toMillis();
+    if(v instanceof Date)return v.getTime();
+    if(typeof v==='number')return v;
+  }catch(_){ }
+  return 0;
+}
+
 async function carregarTokens(filtros){
   let q=admin.firestore().collection(TOKENS).where('ativo','==',true);
   Object.entries(filtros).forEach(([k,v])=>{q=q.where(k,'==',v)});
   const s=await q.get();
-  const tokens=s.docs.map(d=>({ref:d.ref,...d.data()})).filter(x=>x.token);
-  console.log('PUSH_TOKENS',{filtros,quantidade:tokens.length});
+  const limite=Date.now()-(TOKEN_MAX_AGE_DAYS*24*60*60*1000);
+  const tokens=[];
+  const expirar=[];
+  let antigos=0;
+  for(const d of s.docs){
+    const x={ref:d.ref,...d.data()};
+    if(!x.token)continue;
+    const atualizado=timestampMs(x.atualizadoEm);
+    if(atualizado&&atualizado<limite){
+      antigos++;
+      expirar.push(d.ref.set({
+        ativo:false,
+        motivoDesativacao:'expirado_'+TOKEN_MAX_AGE_DAYS+'_dias',
+        desativadoEm:admin.firestore.FieldValue.serverTimestamp(),
+        atualizadoEm:admin.firestore.FieldValue.serverTimestamp()
+      },{merge:true}));
+      continue;
+    }
+    tokens.push(x);
+  }
+  if(expirar.length)await Promise.all(expirar);
+  console.log('PUSH_TOKENS',{filtros,quantidade:tokens.length,expirados:antigos});
   return tokens;
 }
 
@@ -132,8 +162,11 @@ async function enviar(tokens,data){
     console.warn('PUSH_SEM_TOKENS',{tag:data&&data.tag||''});
     return {sucesso:0,falha:0};
   }
-  const unicos=[];const vistos=new Set();
-  for(const t of tokens){if(!vistos.has(t.token)){vistos.add(t.token);unicos.push(t)}}
+  const unicos=[];const vistos=new Set();let duplicados=0;
+  for(const t of tokens){
+    if(vistos.has(t.token)){duplicados++;continue}
+    vistos.add(t.token);unicos.push(t);
+  }
   let sucesso=0,falha=0;
   const destino=urlWeb(data&&data.url);
   const titulo=String(data&&data.title||'Interfood');
@@ -166,8 +199,8 @@ async function enviar(tokens,data){
     });
     await Promise.all(apagar);
   }
-  console.log('PUSH_FCM_RESULTADO',{tag,sucesso,falha});
-  return {sucesso,falha};
+  console.log('PUSH_FCM_RESULTADO',{tag,sucesso,falha,duplicadosIgnorados:duplicados});
+  return {sucesso,falha,duplicadosIgnorados:duplicados};
 }
 
 exports.notificarPedidoInterfood=onDocumentWritten({
