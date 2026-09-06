@@ -1,10 +1,12 @@
 /* Interfood · homologação · cadastro de push FCM
    Mantém o push ativo após atualizar/reabrir a página no mesmo navegador.
-   Logout continua desativando o token por segurança. */
+   Cada perfil mantém seu próprio contexto no navegador.
+   Logout continua desativando somente o perfil autenticado por segurança. */
 (function(){
   const ENDPOINT='https://us-central1-interliga-homologacao-eb0f2.cloudfunctions.net/registrarPushInterfood';
   const SW_URL='./firebase-messaging-sw.js?v=2026.09.06.3';
-  const STORAGE_KEY='interfoodPushContextoHomologacao';
+  const STORAGE_KEY='interfoodPushContextosHomologacao';
+  const STORAGE_ANTIGO='interfoodPushContextoHomologacao';
 
   function carregarMessaging(){
     if(firebase.messaging)return Promise.resolve();
@@ -53,52 +55,91 @@
     return data;
   }
 
+  function lerContextos(){
+    let mapa={};
+    try{
+      mapa=JSON.parse(localStorage.getItem(STORAGE_KEY)||'{}')||{};
+      if(typeof mapa!=='object'||Array.isArray(mapa))mapa={};
+    }catch(_){mapa={};}
+    try{
+      const antigo=JSON.parse(localStorage.getItem(STORAGE_ANTIGO)||'null');
+      if(antigo&&antigo.role&&!mapa[antigo.role]){
+        mapa[antigo.role]=antigo;
+        localStorage.setItem(STORAGE_KEY,JSON.stringify(mapa));
+      }
+      localStorage.removeItem(STORAGE_ANTIGO);
+    }catch(_){ }
+    return mapa;
+  }
+
   function salvarContexto(opts){
     try{
-      localStorage.setItem(STORAGE_KEY,JSON.stringify({
+      const role=String(opts.role||'');
+      if(!role)return;
+      const mapa=lerContextos();
+      mapa[role]={
         appName:String(opts.app&&opts.app.name||'[DEFAULT]'),
-        role:String(opts.role||''),
+        role,
         franquiaId:String(opts.franquiaId||''),
         lojaId:String(opts.lojaId||'')
-      }));
-      if(opts.role==='cliente'){
+      };
+      localStorage.setItem(STORAGE_KEY,JSON.stringify(mapa));
+      if(role==='cliente'){
         localStorage.setItem('interfoodClienteAlertas','1');
         localStorage.setItem('interfoodClientePushRegistrado','1');
       }
     }catch(_){ }
   }
 
-  function limparContexto(){
+  function limparContexto(opts){
     try{
-      localStorage.removeItem(STORAGE_KEY);
-      localStorage.removeItem('interfoodClientePushRegistrado');
-      localStorage.removeItem('interfoodClienteAlertas');
+      const role=String(opts&&opts.role||'');
+      const mapa=lerContextos();
+      if(role&&mapa[role])delete mapa[role];
+      if(Object.keys(mapa).length)localStorage.setItem(STORAGE_KEY,JSON.stringify(mapa));
+      else localStorage.removeItem(STORAGE_KEY);
+      localStorage.removeItem(STORAGE_ANTIGO);
+      if(role==='cliente'){
+        localStorage.removeItem('interfoodClientePushRegistrado');
+        localStorage.removeItem('interfoodClienteAlertas');
+      }
     }catch(_){ }
   }
 
-  function marcarUIAtivo(){
-    ['btnAlertas','pushBtn','alertasBtn'].forEach(id=>{
-      const b=document.getElementById(id);
-      if(!b)return;
+  function botaoDoRole(role){
+    const ids={cliente:'btnAlertas',estabelecimento:'pushBtn',entregador:'alertasBtn'};
+    return document.getElementById(ids[role]||'');
+  }
+
+  function detectarRolePagina(){
+    if(document.getElementById('btnAlertas'))return 'cliente';
+    if(document.getElementById('pushBtn'))return 'estabelecimento';
+    if(document.getElementById('alertasBtn'))return 'entregador';
+    return '';
+  }
+
+  function marcarUIAtivo(role){
+    const b=botaoDoRole(role);
+    if(b){
       b.textContent='🔔 Push ativado';
       b.classList.add('ativo');
-      if(id==='pushBtn')b.disabled=true;
-    });
-    try{window.dispatchEvent(new CustomEvent('interfood-push-status',{detail:{ativo:true}}))}catch(_){ }
+      if(role==='estabelecimento')b.disabled=true;
+    }
+    try{window.dispatchEvent(new CustomEvent('interfood-push-status',{detail:{ativo:true,role:String(role||'')}}))}catch(_){ }
   }
 
   async function desativar(opts){
     if(!opts||!opts.app||!opts.auth)return {ok:false};
     const user=opts.auth.currentUser;
-    if(!user){limparContexto();return {ok:true};}
+    if(!user){limparContexto(opts);return {ok:true};}
     try{
       const token=await obterToken(opts);
       await chamarBackend(opts,token,'desativar');
-      limparContexto();
+      limparContexto(opts);
       return {ok:true};
     }catch(e){
       console.warn('InterfoodPush.desativar',e&&e.message||e);
-      limparContexto();
+      limparContexto(opts);
       return {ok:false,error:e};
     }
   }
@@ -109,7 +150,7 @@
     const signOutOriginal=auth.signOut.bind(auth);
     auth.__interfoodPushLogoutProtegido=true;
     auth.signOut=async function(){
-      try{await desativar(opts)}catch(_){limparContexto()}
+      try{await desativar(opts)}catch(_){limparContexto(opts)}
       return signOutOriginal();
     };
   }
@@ -124,26 +165,28 @@
     await chamarBackend(opts,token,'registrar');
     salvarContexto(opts);
     protegerLogout(opts);
-    marcarUIAtivo();
+    marcarUIAtivo(String(opts.role));
     return {ok:true,token};
   }
 
-  async function restaurarSalvo(){
+  async function restaurarSalvo(roleDesejado){
     if(!('Notification' in window)||Notification.permission!=='granted')return false;
-    let salvo=null;
-    try{salvo=JSON.parse(localStorage.getItem(STORAGE_KEY)||'null')}catch(_){ }
-    if(!salvo||!salvo.role||!salvo.appName)return false;
+    const role=String(roleDesejado||detectarRolePagina()||'');
+    if(!role)return false;
+    const mapa=lerContextos();
+    const salvo=mapa[role];
+    if(!salvo||!salvo.appName)return false;
     if(!window.firebase||!Array.isArray(firebase.apps))return false;
     const app=firebase.apps.find(a=>a.name===salvo.appName);
     if(!app)return false;
     const auth=app.auth();
     if(!auth.currentUser)return false;
-    const opts={app,auth,role:salvo.role,franquiaId:salvo.franquiaId||'',lojaId:salvo.lojaId||''};
+    const opts={app,auth,role,franquiaId:salvo.franquiaId||'',lojaId:salvo.lojaId||''};
     const token=await obterToken(opts);
     await chamarBackend(opts,token,'registrar');
     salvarContexto(opts);
     protegerLogout(opts);
-    marcarUIAtivo();
+    marcarUIAtivo(role);
     return true;
   }
 
