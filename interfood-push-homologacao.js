@@ -3,6 +3,7 @@
    window.INTERFOOD_VAPID_KEY. Não altera os alertas locais já validados. */
 (function(){
   const ENDPOINT='https://us-central1-interliga-homologacao-eb0f2.cloudfunctions.net/registrarPushInterfood';
+  const SW_URL='./firebase-messaging-sw.js?v=2026.09.06.2';
 
   function carregarMessaging(){
     if(firebase.messaging)return Promise.resolve();
@@ -27,9 +28,13 @@
     if(perm!=='granted') throw new Error('Permissão de notificação não concedida.');
 
     await carregarMessaging();
-    const reg=await navigator.serviceWorker.register('./firebase-messaging-sw.js');
+    const reg=await navigator.serviceWorker.register(SW_URL,{scope:'./'});
+    try{await reg.update()}catch(_){ }
+    if(reg.waiting) reg.waiting.postMessage({type:'SKIP_WAITING'});
+    await navigator.serviceWorker.ready;
+    const ativo=await navigator.serviceWorker.getRegistration('./')||reg;
     const messaging=opts.app.messaging();
-    const token=await messaging.getToken({vapidKey:vapid,serviceWorkerRegistration:reg});
+    const token=await messaging.getToken({vapidKey:vapid,serviceWorkerRegistration:ativo});
     if(!token) throw new Error('O navegador não forneceu um token de notificação.');
 
     const user=opts.auth.currentUser;
