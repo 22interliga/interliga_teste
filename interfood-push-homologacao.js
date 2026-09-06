@@ -1,9 +1,10 @@
 /* Interfood · homologação · cadastro de push FCM
-   Só ativa quando a chave Web Push (VAPID) estiver configurada em
-   window.INTERFOOD_VAPID_KEY. Não altera os alertas locais já validados. */
+   Mantém o push ativo após atualizar/reabrir a página no mesmo navegador.
+   Logout continua desativando o token por segurança. */
 (function(){
   const ENDPOINT='https://us-central1-interliga-homologacao-eb0f2.cloudfunctions.net/registrarPushInterfood';
   const SW_URL='./firebase-messaging-sw.js?v=2026.09.06.3';
+  const STORAGE_KEY='interfoodPushContextoHomologacao';
 
   function carregarMessaging(){
     if(firebase.messaging)return Promise.resolve();
@@ -52,16 +53,52 @@
     return data;
   }
 
+  function salvarContexto(opts){
+    try{
+      localStorage.setItem(STORAGE_KEY,JSON.stringify({
+        appName:String(opts.app&&opts.app.name||'[DEFAULT]'),
+        role:String(opts.role||''),
+        franquiaId:String(opts.franquiaId||''),
+        lojaId:String(opts.lojaId||'')
+      }));
+      if(opts.role==='cliente'){
+        localStorage.setItem('interfoodClienteAlertas','1');
+        localStorage.setItem('interfoodClientePushRegistrado','1');
+      }
+    }catch(_){ }
+  }
+
+  function limparContexto(){
+    try{
+      localStorage.removeItem(STORAGE_KEY);
+      localStorage.removeItem('interfoodClientePushRegistrado');
+      localStorage.removeItem('interfoodClienteAlertas');
+    }catch(_){ }
+  }
+
+  function marcarUIAtivo(){
+    ['btnAlertas','pushBtn','alertasBtn'].forEach(id=>{
+      const b=document.getElementById(id);
+      if(!b)return;
+      b.textContent='🔔 Push ativado';
+      b.classList.add('ativo');
+      if(id==='pushBtn')b.disabled=true;
+    });
+    try{window.dispatchEvent(new CustomEvent('interfood-push-status',{detail:{ativo:true}}))}catch(_){ }
+  }
+
   async function desativar(opts){
     if(!opts||!opts.app||!opts.auth)return {ok:false};
     const user=opts.auth.currentUser;
-    if(!user)return {ok:true};
+    if(!user){limparContexto();return {ok:true};}
     try{
       const token=await obterToken(opts);
       await chamarBackend(opts,token,'desativar');
+      limparContexto();
       return {ok:true};
     }catch(e){
       console.warn('InterfoodPush.desativar',e&&e.message||e);
+      limparContexto();
       return {ok:false,error:e};
     }
   }
@@ -72,11 +109,7 @@
     const signOutOriginal=auth.signOut.bind(auth);
     auth.__interfoodPushLogoutProtegido=true;
     auth.signOut=async function(){
-      try{await desativar(opts)}catch(_){ }
-      try{
-        localStorage.removeItem('interfoodClientePushRegistrado');
-        localStorage.removeItem('interfoodClienteAlertas');
-      }catch(_){ }
+      try{await desativar(opts)}catch(_){limparContexto()}
       return signOutOriginal();
     };
   }
@@ -89,9 +122,48 @@
     if(perm!=='granted') throw new Error('Permissão de notificação não concedida.');
     const token=await obterToken(opts);
     await chamarBackend(opts,token,'registrar');
+    salvarContexto(opts);
     protegerLogout(opts);
+    marcarUIAtivo();
     return {ok:true,token};
   }
 
-  window.InterfoodPush={ativar,desativar};
+  async function restaurarSalvo(){
+    if(!('Notification' in window)||Notification.permission!=='granted')return false;
+    let salvo=null;
+    try{salvo=JSON.parse(localStorage.getItem(STORAGE_KEY)||'null')}catch(_){ }
+    if(!salvo||!salvo.role||!salvo.appName)return false;
+    if(!window.firebase||!Array.isArray(firebase.apps))return false;
+    const app=firebase.apps.find(a=>a.name===salvo.appName);
+    if(!app)return false;
+    const auth=app.auth();
+    if(!auth.currentUser)return false;
+    const opts={app,auth,role:salvo.role,franquiaId:salvo.franquiaId||'',lojaId:salvo.lojaId||''};
+    const token=await obterToken(opts);
+    await chamarBackend(opts,token,'registrar');
+    salvarContexto(opts);
+    protegerLogout(opts);
+    marcarUIAtivo();
+    return true;
+  }
+
+  function iniciarRestauracaoAutomatica(){
+    let tentativas=0;
+    const tentar=async()=>{
+      tentativas++;
+      try{
+        if(await restaurarSalvo())return true;
+      }catch(e){console.warn('InterfoodPush.restaurar',e&&e.message||e)}
+      return false;
+    };
+    tentar().then(ok=>{
+      if(ok)return;
+      const timer=setInterval(async()=>{
+        if(await tentar()||tentativas>=30)clearInterval(timer);
+      },1000);
+    });
+  }
+
+  window.InterfoodPush={ativar,desativar,restaurar:restaurarSalvo};
+  iniciarRestauracaoAutomatica();
 })();
