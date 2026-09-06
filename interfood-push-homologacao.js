@@ -52,17 +52,6 @@
     return data;
   }
 
-  async function ativar(opts){
-    if(!('Notification' in window)) throw new Error('Este navegador não oferece suporte a notificações.');
-    if(!opts||!opts.app||!opts.auth||!opts.role) throw new Error('Configuração de push incompleta.');
-    let perm=Notification.permission;
-    if(perm==='default') perm=await Notification.requestPermission();
-    if(perm!=='granted') throw new Error('Permissão de notificação não concedida.');
-    const token=await obterToken(opts);
-    await chamarBackend(opts,token,'registrar');
-    return {ok:true,token};
-  }
-
   async function desativar(opts){
     if(!opts||!opts.app||!opts.auth)return {ok:false};
     const user=opts.auth.currentUser;
@@ -75,6 +64,33 @@
       console.warn('InterfoodPush.desativar',e&&e.message||e);
       return {ok:false,error:e};
     }
+  }
+
+  function protegerLogout(opts){
+    const auth=opts&&opts.auth;
+    if(!auth||auth.__interfoodPushLogoutProtegido)return;
+    const signOutOriginal=auth.signOut.bind(auth);
+    auth.__interfoodPushLogoutProtegido=true;
+    auth.signOut=async function(){
+      try{await desativar(opts)}catch(_){ }
+      try{
+        localStorage.removeItem('interfoodClientePushRegistrado');
+        localStorage.removeItem('interfoodClienteAlertas');
+      }catch(_){ }
+      return signOutOriginal();
+    };
+  }
+
+  async function ativar(opts){
+    if(!('Notification' in window)) throw new Error('Este navegador não oferece suporte a notificações.');
+    if(!opts||!opts.app||!opts.auth||!opts.role) throw new Error('Configuração de push incompleta.');
+    let perm=Notification.permission;
+    if(perm==='default') perm=await Notification.requestPermission();
+    if(perm!=='granted') throw new Error('Permissão de notificação não concedida.');
+    const token=await obterToken(opts);
+    await chamarBackend(opts,token,'registrar');
+    protegerLogout(opts);
+    return {ok:true,token};
   }
 
   window.InterfoodPush={ativar,desativar};
