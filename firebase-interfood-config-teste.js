@@ -12,6 +12,9 @@ window.INTERFOOD_FIREBASE_TEST_CONFIG = {
 // Chave publica Web Push (VAPID) da homologacao.
 window.INTERFOOD_VAPID_KEY = "BOzk5NqpT7rKj3Ni5YDOcBcCvG3F8UFompPCchQH8JqDddL-MZ-OfTHGMvxul8cYWn0uWTuIUb6vVAMarBDEM20";
 
+// Chave publica reCAPTCHA Enterprise usada pelo Firebase App Check na homologacao.
+window.INTERFOOD_RECAPTCHA_ENTERPRISE_KEY = "6LdeF6wtAAAAAL_P2HiVIIIVe6i_czQcbtBAbncD8";
+
 // Trava: nunca aceitar o projeto de producao nesta camada de homologacao.
 window.INTERFOOD_FIREBASE_PRODUCTION_PROJECT_ID = "interliga-mobilidade";
 if (window.INTERFOOD_FIREBASE_TEST_CONFIG.projectId === window.INTERFOOD_FIREBASE_PRODUCTION_PROJECT_ID) {
