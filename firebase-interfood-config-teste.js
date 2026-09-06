@@ -65,3 +65,20 @@ if (window.INTERFOOD_FIREBASE_TEST_CONFIG.projectId === window.INTERFOOD_FIREBAS
   window.addEventListener('focus',verificarVersao);
   setInterval(verificarVersao,60000);
 })();
+
+// App Check e carregado antes do codigo da pagina para que todos os apps Firebase
+// criados depois desta configuracao ja nascam com atestacao habilitada.
+(function(){
+  if(window.__INTERFOOD_APPCHECK_LOADER)return;
+  window.__INTERFOOD_APPCHECK_LOADER=true;
+  const sdk='https://www.gstatic.com/firebasejs/10.12.5/firebase-app-check-compat.js';
+  const helper='interfood-appcheck-homologacao.js?v=2026.09.06.5';
+  if(document.readyState==='loading'){
+    document.write('<script src="'+sdk+'"><\/script><script src="'+helper+'"><\/script>');
+    return;
+  }
+  const s=document.createElement('script');
+  s.src=sdk;
+  s.onload=function(){const h=document.createElement('script');h.src=helper;document.head.appendChild(h)};
+  document.head.appendChild(s);
+})();
