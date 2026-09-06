@@ -16,17 +16,11 @@
     });
   }
 
-  async function ativar(opts){
+  async function obterToken(opts){
     const vapid=String(window.INTERFOOD_VAPID_KEY||'').trim();
     if(!vapid) throw new Error('Push ainda não configurado: falta a chave Web Push da homologação.');
     if(!('serviceWorker' in navigator)) throw new Error('Este navegador não oferece suporte a Service Worker.');
-    if(!('Notification' in window)) throw new Error('Este navegador não oferece suporte a notificações.');
-    if(!opts||!opts.app||!opts.auth||!opts.role) throw new Error('Configuração de push incompleta.');
-
-    let perm=Notification.permission;
-    if(perm==='default') perm=await Notification.requestPermission();
-    if(perm!=='granted') throw new Error('Permissão de notificação não concedida.');
-
+    if(!opts||!opts.app||!opts.auth) throw new Error('Configuração de push incompleta.');
     await carregarMessaging();
     const reg=await navigator.serviceWorker.register(SW_URL,{scope:'./',updateViaCache:'none'});
     try{await reg.update()}catch(_){ }
@@ -35,8 +29,11 @@
     const messaging=opts.app.messaging();
     const token=await messaging.getToken({vapidKey:vapid,serviceWorkerRegistration:ativo});
     if(!token) throw new Error('O navegador não forneceu um token de notificação.');
+    return token;
+  }
 
-    const user=opts.auth.currentUser;
+  async function chamarBackend(opts,token,acao){
+    const user=opts&&opts.auth&&opts.auth.currentUser;
     if(!user) throw new Error('Usuário não autenticado.');
     const idToken=await user.getIdToken();
     const resp=await fetch(ENDPOINT,{
@@ -44,15 +41,41 @@
       headers:{'Content-Type':'application/json','Authorization':'Bearer '+idToken},
       body:JSON.stringify({
         token,
-        role:String(opts.role),
+        acao:acao||'registrar',
+        role:String(opts.role||''),
         franquiaId:String(opts.franquiaId||''),
         lojaId:String(opts.lojaId||'')
       })
     });
     const data=await resp.json().catch(()=>({}));
-    if(!resp.ok) throw new Error(data.error||'Não foi possível registrar este navegador para push.');
+    if(!resp.ok) throw new Error(data.error||'Não foi possível atualizar o cadastro de push.');
+    return data;
+  }
+
+  async function ativar(opts){
+    if(!('Notification' in window)) throw new Error('Este navegador não oferece suporte a notificações.');
+    if(!opts||!opts.app||!opts.auth||!opts.role) throw new Error('Configuração de push incompleta.');
+    let perm=Notification.permission;
+    if(perm==='default') perm=await Notification.requestPermission();
+    if(perm!=='granted') throw new Error('Permissão de notificação não concedida.');
+    const token=await obterToken(opts);
+    await chamarBackend(opts,token,'registrar');
     return {ok:true,token};
   }
 
-  window.InterfoodPush={ativar};
+  async function desativar(opts){
+    if(!opts||!opts.app||!opts.auth)return {ok:false};
+    const user=opts.auth.currentUser;
+    if(!user)return {ok:true};
+    try{
+      const token=await obterToken(opts);
+      await chamarBackend(opts,token,'desativar');
+      return {ok:true};
+    }catch(e){
+      console.warn('InterfoodPush.desativar',e&&e.message||e);
+      return {ok:false,error:e};
+    }
+  }
+
+  window.InterfoodPush={ativar,desativar};
 })();
