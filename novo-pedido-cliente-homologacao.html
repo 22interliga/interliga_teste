@@ -21,7 +21,7 @@
 <label>Observações</label><textarea id="observacoes" maxlength="500" placeholder="Ex.: sem cebola, troco para R$ 50,00"></textarea>
 <button class="btn" id="btn" onclick="enviarPedido()" disabled>Validar área e fazer pedido</button><button class="btn sec" onclick="sair()">Sair da conta</button><div id="msg"></div>
 </div></div>
-<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script><script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script><script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js"></script><script src="firebase-interfood-config-teste.js?v=7b9ac687"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script><script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script><script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js"></script><script src="interfood-homologacao-refresh.js?v=2026.09.05.1"></script><script src="firebase-interfood-config-teste.js?v=2026.09.05.1"></script>
 <script>
 const q=new URLSearchParams(location.search),fid=q.get('franquia')||'candeias',loja=q.get('loja')||'ljc6GjET9wAoBBdQNE8g',nome=q.get('nome')||'TESTE TESTE';
 const cfg=window.INTERFOOD_FIREBASE_TEST_CONFIG;if(!cfg||cfg.projectId==='interliga-mobilidade')throw new Error('Configuração de homologação inválida.');
