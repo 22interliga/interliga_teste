@@ -54,20 +54,44 @@ exports.registrarPushInterfood=onRequest({region:'us-central1',timeoutSeconds:30
   if(req.get('origin')&&req.get('origin')!==ALLOWED_ORIGIN)return res.status(403).json({error:'Origem não autorizada.'});
   try{
     const decoded=await usuario(req);
-    const {token,role,franquiaId='',lojaId=''}=req.body||{};
+    const {token,role,franquiaId='',lojaId='',acao='registrar'}=req.body||{};
     if(typeof token!=='string'||token.length<40||token.length>4096)return res.status(400).json({error:'Token de push inválido.'});
-    await validarVinculo(decoded.uid,String(role||''),String(franquiaId||''),String(lojaId||''));
     const hash=crypto.createHash('sha256').update(token).digest('hex').slice(0,40);
-    await admin.firestore().collection(TOKENS).doc(decoded.uid+'_'+hash).set({
+    const db=admin.firestore();
+    const ref=db.collection(TOKENS).doc(decoded.uid+'_'+hash);
+
+    if(String(acao)==='desativar'){
+      const atual=await ref.get();
+      if(atual.exists&&atual.data()?.uid===decoded.uid&&atual.data()?.token===token){
+        await ref.set({ativo:false,desativadoEm:admin.firestore.FieldValue.serverTimestamp(),atualizadoEm:admin.firestore.FieldValue.serverTimestamp()},{merge:true});
+      }
+      console.log('PUSH_DESATIVADO',{uid:decoded.uid});
+      return res.json({ok:true});
+    }
+
+    if(String(acao)!=='registrar')return res.status(400).json({error:'Ação de push inválida.'});
+    await validarVinculo(decoded.uid,String(role||''),String(franquiaId||''),String(lojaId||''));
+
+    const mesmosToken=await db.collection(TOKENS).where('token','==',token).get();
+    const batch=db.batch();
+    mesmosToken.docs.forEach(d=>{
+      if(d.ref.path!==ref.path){
+        batch.set(d.ref,{ativo:false,substituidoPorUid:decoded.uid,atualizadoEm:admin.firestore.FieldValue.serverTimestamp()},{merge:true});
+      }
+    });
+    batch.set(ref,{
       uid:decoded.uid,
       token,
       role:String(role),
       franquiaId:String(franquiaId||''),
       lojaId:String(lojaId||''),
       ativo:true,
+      desativadoEm:admin.firestore.FieldValue.delete(),
+      substituidoPorUid:admin.firestore.FieldValue.delete(),
       atualizadoEm:admin.firestore.FieldValue.serverTimestamp()
     },{merge:true});
-    console.log('PUSH_REGISTRO_OK',{uid:decoded.uid,role:String(role),franquiaId:String(franquiaId||''),lojaId:String(lojaId||'')});
+    await batch.commit();
+    console.log('PUSH_REGISTRO_OK',{uid:decoded.uid,role:String(role),franquiaId:String(franquiaId||''),lojaId:String(lojaId||''),substituidos:Math.max(0,mesmosToken.size-(mesmosToken.docs.some(d=>d.ref.path===ref.path)?1:0))});
     return res.json({ok:true});
   }catch(e){
     console.error('registrarPushInterfood',e);
