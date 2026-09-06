@@ -17,6 +17,12 @@ service cloud.firestore {
     function minhaFranquiaFranqueado(){return franqueadoAtivo()?franqueadoDoc().data.franquiaId:null;}
     function souDonoDaLoja(fid,lojaId){return estabelecimentoAtivo()&&minhaFranquiaEstabelecimento()==fid&&minhaLoja()==lojaId;}
     function entregadorDaFranquia(fid){return entregadorAtivo()&&minhaFranquiaEntregador()==fid;}
+    function entregadorPodeLerPedido(fid){
+      return entregadorDaFranquia(fid)&&(
+        resource.data.status=='Pronto'||
+        (resource.data.keys().hasAny(['entregador'])&&resource.data.entregador.uid==request.auth.uid)
+      );
+    }
     function franqueadoDaFranquia(fid){return franqueadoAtivo()&&minhaFranquiaFranqueado()==fid;}
     function clienteEhDonoDoPedido(){return signedIn()&&resource.data.clienteUid==request.auth.uid&&(clienteAnonimo()||clienteCadastrado());}
     function somenteStatusFoiAlterado(){return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status']);}
@@ -50,7 +56,7 @@ service cloud.firestore {
     match /franquias/{fid}{allow read:if franqueadoDaFranquia(fid);allow write:if false;match /estabelecimentos/{lojaId}{allow read:if souDonoDaLoja(fid,lojaId)||entregadorDaFranquia(fid)||franqueadoDaFranquia(fid)||clienteCadastrado();allow create:if franqueadoPodeCriarEstabelecimento(fid,lojaId);allow update:if configuracaoOperacionalLojaValida(fid,lojaId);allow delete:if false;
       match /cardapio/{produtoId}{allow read:if souDonoDaLoja(fid,lojaId)||franqueadoDaFranquia(fid)||clienteCadastrado();allow create:if souDonoDaLoja(fid,lojaId)&&cardapioValido()&&request.resource.data.criadoEm==request.time&&request.resource.data.atualizadoEm==request.time;allow update:if souDonoDaLoja(fid,lojaId)&&cardapioValido()&&request.resource.data.criadoEm==resource.data.criadoEm&&request.resource.data.atualizadoEm==request.time;allow delete:if false;}
       match /categoriasCardapio/{categoriaId}{allow read:if souDonoDaLoja(fid,lojaId)||franqueadoDaFranquia(fid)||clienteCadastrado();allow create:if souDonoDaLoja(fid,lojaId)&&categoriaCardapioValida()&&request.resource.data.criadoEm==request.time&&request.resource.data.atualizadoEm==request.time;allow update:if souDonoDaLoja(fid,lojaId)&&categoriaCardapioValida()&&request.resource.data.criadoEm==resource.data.criadoEm&&request.resource.data.atualizadoEm==request.time;allow delete:if false;}
-      match /pedidos/{pedidoId}{allow read:if souDonoDaLoja(fid,lojaId)||entregadorDaFranquia(fid)||franqueadoDaFranquia(fid)||clienteEhDonoDoPedido();allow create:if false;allow update:if (souDonoDaLoja(fid,lojaId)&&((somenteStatusFoiAlterado()&&transicaoStatusEstabelecimentoValida())||cancelamentoEstabelecimentoValido()))||(entregadorDaFranquia(fid)&&(transicaoEntregadorValida()||desistirEntregaValido()||incidenteEntregaValido()))||gestaoOcorrenciaFranqueadoValida(fid)||cancelamentoClienteValido();allow delete:if false;}
+      match /pedidos/{pedidoId}{allow read:if souDonoDaLoja(fid,lojaId)||entregadorPodeLerPedido(fid)||franqueadoDaFranquia(fid)||clienteEhDonoDoPedido();allow create:if false;allow update:if (souDonoDaLoja(fid,lojaId)&&((somenteStatusFoiAlterado()&&transicaoStatusEstabelecimentoValida())||cancelamentoEstabelecimentoValido()))||(entregadorDaFranquia(fid)&&(transicaoEntregadorValida()||desistirEntregaValido()||incidenteEntregaValido()))||gestaoOcorrenciaFranqueadoValida(fid)||cancelamentoClienteValido();allow delete:if false;}
     }}
     match /{document=**}{allow read,write:if false;}
   }
