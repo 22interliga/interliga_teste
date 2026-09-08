@@ -13,8 +13,15 @@ function cors(req,res){
   const origin=req.get('origin');
   if(origin===ALLOWED_ORIGIN)res.set('Access-Control-Allow-Origin',origin);
   res.set('Vary','Origin');
-  res.set('Access-Control-Allow-Headers','Authorization, Content-Type');
+  res.set('Access-Control-Allow-Headers','Authorization, Content-Type, X-Firebase-AppCheck');
   res.set('Access-Control-Allow-Methods','POST, OPTIONS');
+}
+
+async function validarAppCheck(req){
+  const token=String(req.get('X-Firebase-AppCheck')||'').trim();
+  if(!token)throw Object.assign(new Error('App Check não informado.'),{status:401});
+  try{return await admin.appCheck().verifyToken(token)}
+  catch(_){throw Object.assign(new Error('App Check inválido.'),{status:401});}
 }
 
 async function usuario(req){
@@ -54,6 +61,7 @@ exports.registrarPushInterfood=onRequest({region:'us-central1',timeoutSeconds:30
   if(req.method!=='POST')return res.status(405).json({error:'Método não permitido.'});
   if(req.get('origin')&&req.get('origin')!==ALLOWED_ORIGIN)return res.status(403).json({error:'Origem não autorizada.'});
   try{
+    await validarAppCheck(req);
     const decoded=await usuario(req);
     const {token,role,franquiaId='',lojaId='',acao='registrar'}=req.body||{};
     if(typeof token!=='string'||token.length<40||token.length>4096)return res.status(400).json({error:'Token de push inválido.'});
@@ -74,9 +82,6 @@ exports.registrarPushInterfood=onRequest({region:'us-central1',timeoutSeconds:30
     if(String(acao)!=='registrar')return res.status(400).json({error:'Ação de push inválida.'});
     await validarVinculo(decoded.uid,roleNormalizado,String(franquiaId||''),String(lojaId||''));
 
-    // O mesmo navegador pode manter Cliente, Estabelecimento e Entregador ativos
-    // ao mesmo tempo. Para evitar vazamento entre contas, substituímos somente
-    // registros antigos do MESMO perfil que reutilizam o mesmo token.
     const mesmosToken=await db.collection(TOKENS).where('token','==',token).get();
     const batch=db.batch();
     let substituidosMesmoPerfil=0;
