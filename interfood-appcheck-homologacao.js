@@ -36,6 +36,16 @@
     }
   }
 
+  async function token(app){
+    validar();
+    const alvo=app||(firebase.apps||[]).find(a=>a&&a.options&&a.options.projectId===cfg.projectId);
+    if(!alvo)throw new Error('App Check: app Firebase de homologação não encontrado.');
+    const ac=ativar(alvo);
+    const r=await ac.getToken(false);
+    if(!r||!r.token)throw new Error('App Check: token não obtido.');
+    return r.token;
+  }
+
   validar();
   const originalInitialize=firebase.initializeApp.bind(firebase);
   firebase.initializeApp=function(){
@@ -45,5 +55,18 @@
   };
 
   (firebase.apps||[]).forEach(tentar);
-  window.InterfoodAppCheck={ativar,tentar};
+  window.InterfoodAppCheck={ativar,tentar,token};
+
+  // Protege especificamente o endpoint de análise de cardápio sem alterar
+  // o comportamento das demais requisições já validadas na homologação.
+  const fetchOriginal=window.fetch.bind(window);
+  window.fetch=async function(input,init){
+    const url=typeof input==='string'?input:String(input&&input.url||'');
+    if(!url.includes('/analisarCardapioImagem'))return fetchOriginal(input,init);
+    const op=Object.assign({},init||{});
+    const headers=new Headers(op.headers||(input instanceof Request?input.headers:undefined));
+    if(!headers.has('X-Firebase-AppCheck'))headers.set('X-Firebase-AppCheck',await token());
+    op.headers=headers;
+    return fetchOriginal(input,op);
+  };
 })();
