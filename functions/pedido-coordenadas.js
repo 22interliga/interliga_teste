@@ -8,7 +8,7 @@ function cors(req,res){
   const origin=req.get('origin');
   if(origin===ALLOWED_ORIGIN)res.set('Access-Control-Allow-Origin',origin);
   res.set('Vary','Origin');
-  res.set('Access-Control-Allow-Headers','Authorization, Content-Type');
+  res.set('Access-Control-Allow-Headers','Authorization, Content-Type, X-Firebase-AppCheck');
   res.set('Access-Control-Allow-Methods','POST, OPTIONS');
 }
 function erro(msg,status){return Object.assign(new Error(msg),{status});}
@@ -34,6 +34,12 @@ function lojaAbertaNoHorario(loja){
   const agora=agoraNoFusoMinutos();
   const aberta=abertura<fechamento ? agora>=abertura&&agora<fechamento : agora>=abertura||agora<fechamento;
   return {ok:aberta,abertura:String(loja.horarioAbertura),fechamento:String(loja.horarioFechamento),agora};
+}
+
+async function verificarAppCheck(req){
+  const token=String(req.get('X-Firebase-AppCheck')||'').trim();
+  if(!token)throw erro('App Check não informado.',401);
+  try{return await admin.appCheck().verifyToken(token)}catch(e){console.warn('APPCHECK_PEDIDO_INVALIDO',e?.code||e?.message||e);throw erro('App Check inválido.',401);}
 }
 
 async function autenticarCliente(req){
@@ -64,6 +70,7 @@ function selecionarPrecoProduto(produto,item){
 exports.criarPedidoClienteSeguro = onRequest({region:'us-central1',timeoutSeconds:60,memory:'256MiB',maxInstances:10},async(req,res)=>{
   cors(req,res);if(req.method==='OPTIONS')return res.status(204).send('');if(req.method!=='POST')return res.status(405).json({error:'Método não permitido.'});if(req.get('origin')&&req.get('origin')!==ALLOWED_ORIGIN)return res.status(403).json({error:'Origem não autorizada.'});
   try{
+    await verificarAppCheck(req);
     const {uid,perfil}=await autenticarCliente(req),body=req.body||{};
     const franquiaId=String(body.franquiaId||'').trim(),lojaId=String(body.lojaId||'').trim(),entrega=String(body.entrega||'').trim(),pagamento=String(body.pagamento||'').trim(),enderecoId=String(body.enderecoId||'').trim(),observacoes=String(body.observacoes||'').trim().slice(0,500),itensEntrada=Array.isArray(body.itens)?body.itens:[];
     if(!franquiaId||!lojaId||!['Interfood','Retirada'].includes(entrega))throw erro('Dados do pedido inválidos.',400);if(!['Pix','Dinheiro','Cartão na entrega','Online'].includes(pagamento))throw erro('Forma de pagamento inválida.',400);if(!itensEntrada.length||itensEntrada.length>100)throw erro('Carrinho vazio ou inválido.',400);if(entrega==='Interfood'&&!enderecoId)throw erro('Selecione um endereço salvo e confirmado no mapa.',400);
@@ -81,7 +88,7 @@ exports.criarPedidoClienteSeguro = onRequest({region:'us-central1',timeoutSecond
       if(distanciaEntregaKm>raio)throw erro('Endereço fora da área de entrega. Distância aproximada: '+distanciaEntregaKm.toFixed(2).replace('.',',')+' km; limite da loja: '+raio.toFixed(1).replace('.',',')+' km.',422);
       localizacaoEntrega={enderecoId,latitude:geoCliente.lat,longitude:geoCliente.lon,metodo:'ponto-confirmado'};
     }
-    const ref=lojaRef.collection('pedidos').doc(),numero='PED-'+ref.id.slice(0,8).toUpperCase();const pedido={numero,cliente:String(perfil.nome||'').slice(0,120),telefone:String(perfil.telefone||'').slice(0,30),entrega,subtotalProdutos:subtotalCent/100,taxaEntrega:taxaCent/100,valor:totalCent/100,itens,endereco:enderecoValidado,observacoes,pagamento,status:'Novo',clienteUid:uid,franquiaId,lojaId,criadoEm:admin.firestore.FieldValue.serverTimestamp(),origem:'cliente-homologacao-backend-coordenadas',calculadoNoServidor:true,distanciaEntregaKm,raioEntregaKm,localizacaoEntrega,horarioValidado:true,fusoHorario:FUSO_OPERACAO};await ref.set(pedido);
-    return res.status(200).json({ok:true,pedidoId:ref.id,numero,subtotalProdutos:subtotalCent/100,taxaEntrega:taxaCent/100,valor:totalCent/100,distanciaEntregaKm,raioEntregaKm,metodoArea:entrega==='Interfood'?'coordenadas-confirmadas':'retirada',horarioValidado:true});
+    const ref=lojaRef.collection('pedidos').doc(),numero='PED-'+ref.id.slice(0,8).toUpperCase();const pedido={numero,cliente:String(perfil.nome||'').slice(0,120),telefone:String(perfil.telefone||'').slice(0,30),entrega,subtotalProdutos:subtotalCent/100,taxaEntrega:taxaCent/100,valor:totalCent/100,itens,endereco:enderecoValidado,observacoes,pagamento,status:'Novo',clienteUid:uid,franquiaId,lojaId,criadoEm:admin.firestore.FieldValue.serverTimestamp(),origem:'cliente-homologacao-backend-coordenadas-appcheck',calculadoNoServidor:true,appCheckValidado:true,distanciaEntregaKm,raioEntregaKm,localizacaoEntrega,horarioValidado:true,fusoHorario:FUSO_OPERACAO};await ref.set(pedido);
+    return res.status(200).json({ok:true,pedidoId:ref.id,numero,subtotalProdutos:subtotalCent/100,taxaEntrega:taxaCent/100,valor:totalCent/100,distanciaEntregaKm,raioEntregaKm,metodoArea:entrega==='Interfood'?'coordenadas-confirmadas':'retirada',horarioValidado:true,appCheckValidado:true});
   }catch(e){console.error('criarPedidoClienteSeguro coordenadas',e);const status=Number(e?.status)||500;return res.status(status).json({error:status>=500?'Não foi possível concluir o pedido agora.':String(e.message||e)});}
 });
