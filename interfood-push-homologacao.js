@@ -35,13 +35,28 @@
     return token;
   }
 
+  async function obterAppCheckToken(opts){
+    if(!opts||!opts.app)throw new Error('App Check: app Firebase não informado.');
+    const ac=window.InterfoodAppCheck&&window.InterfoodAppCheck.ativar
+      ? window.InterfoodAppCheck.ativar(opts.app)
+      : opts.app.appCheck();
+    const r=await ac.getToken(false);
+    const token=String(r&&r.token||'').trim();
+    if(!token)throw new Error('App Check não forneceu token.');
+    return token;
+  }
+
   async function chamarBackend(opts,token,acao){
     const user=opts&&opts.auth&&opts.auth.currentUser;
     if(!user) throw new Error('Usuário não autenticado.');
-    const idToken=await user.getIdToken();
+    const [idToken,appCheckToken]=await Promise.all([user.getIdToken(),obterAppCheckToken(opts)]);
     const resp=await fetch(ENDPOINT,{
       method:'POST',
-      headers:{'Content-Type':'application/json','Authorization':'Bearer '+idToken},
+      headers:{
+        'Content-Type':'application/json',
+        'Authorization':'Bearer '+idToken,
+        'X-Firebase-AppCheck':appCheckToken
+      },
       body:JSON.stringify({
         token,
         acao:acao||'registrar',
