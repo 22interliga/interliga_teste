@@ -14,7 +14,7 @@ resumoPedidos=null;
 
 const statusAtivos=['Novo','Pendente','Confirmado','Em preparo','Pronto','Entregador aceitou','Coletado','Saiu para entrega'];
 
-function juntarERenderizar(){
+juntarERenderizar=function(){
   const mapa=new Map();
   pedidosHistoricoExtra.forEach(p=>mapa.set(p.id,p));
   pedidosRecentes.forEach(p=>mapa.set(p.id,p));
