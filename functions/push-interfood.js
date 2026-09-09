@@ -224,7 +224,7 @@ async function enviar(tokens,data){
 
 exports.notificarPedidoInterfood=onDocumentWritten({
   document:'franquias/{franquiaId}/estabelecimentos/{lojaId}/pedidos/{pedidoId}',
-  region:'us-central1',
+  region:'southamerica-east1',
   memory:'256MiB',
   timeoutSeconds:60,
   maxInstances:20
