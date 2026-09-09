@@ -42,7 +42,7 @@ function inferirAtorPedido(antes, depois) {
 
 exports.auditarPedidoInterfood = onDocumentWritten({
   document: 'franquias/{franquiaId}/estabelecimentos/{lojaId}/pedidos/{pedidoId}',
-  region: 'us-central1',
+  region: 'southamerica-east1',
   memory: '256MiB',
   timeoutSeconds: 30,
   maxInstances: 10
