@@ -1,1 +1,119 @@
-<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Teste Storage · Interfood Homologação</title><style>body{margin:0;background:#07101f;color:#fff;font-family:Arial,sans-serif}.wrap{max-width:760px;margin:auto;padding:24px}.card{background:#101827;border:1px solid #2b3648;border-radius:14px;padding:18px}.btn{width:100%;padding:13px;border:0;border-radius:10px;background:#ff6b00;color:#fff;font-weight:900;cursor:pointer}.ok{color:#7df0a5}.bad{color:#ff8b9b}.muted{color:#aab4c4;font-size:13px}.linha{padding:10px 0;border-bottom:1px solid #263247}</style></head><body><div class="wrap"><div class="card"><h2>Teste de isolamento do Firebase Storage</h2><p class="muted">HOMOLOGAÇÃO. O teste cria uma imagem mínima em caminho temporário da própria loja, apaga em seguida e tenta gravar em uma loja fictícia, que deve ser bloqueada pelas regras.</p><button id="btn" class="btn">Executar teste</button><div id="out"></div></div></div><script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script><script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script><script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js"></script><script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-storage-compat.js"></script><script src="firebase-interfood-config-teste.js?v=2026.09.05.1"></script><script src="firebase-auth-interfood-teste.js?v=2026.09.05.1"></script><script>const $=x=>document.getElementById(x);function linha(t,c){$('out').innerHTML+='<div class="linha '+(c||'')+'>'+t+'</div>'}async function esperarUsuario(auth){return new Promise((ok,no)=>{const off=auth.onAuthStateChanged(u=>{off();u?ok(u):no(new Error('Faça login como estabelecimento antes de abrir este teste.'))},no)})}async function testar(){const b=$('btn');b.disabled=true;$('out').innerHTML='';try{const {app,auth,db,projectId}=await InterfoodAuthTeste.iniciar();if(projectId!=='interliga-homologacao-eb0f2')throw new Error('Projeto incorreto. Teste bloqueado.');const u=await esperarUsuario(auth);const s=await db.collection('usuariosEstabelecimentos').doc(u.uid).get();if(!s.exists)throw new Error('Vínculo não encontrado.');const p=s.data()||{};if(p.ativo!==true||p.perfil!=='estabelecimento'||!p.franquiaId||!p.lojaId)throw new Error('Perfil não autorizado.');linha('Conta autenticada: '+(u.email||u.uid));linha('Loja vinculada: '+p.franquiaId+' / '+p.lojaId);const storage=app.storage();const bytes=new Uint8Array([137,80,78,71,13,10,26,10]);const meta={contentType:'image/png'};const ts=Date.now();const proprio='interfood/'+p.franquiaId+'/estabelecimentos/'+p.lojaId+'/produtos/__teste_storage_'+ts+'/foto';const outro='interfood/'+p.franquiaId+'/estabelecimentos/__loja_nao_autorizada__/produtos/__teste_storage_'+ts+'/foto';const txt='interfood/'+p.franquiaId+'/estabelecimentos/'+p.lojaId+'/produtos/__teste_storage_'+ts+'/arquivo.txt';let refProprio=storage.ref(proprio);try{await refProprio.put(bytes,meta);linha('1. Escrita na própria loja: PERMITIDA ✅','ok');await refProprio.delete();linha('2. Limpeza do arquivo temporário: CONCLUÍDA ✅','ok')}catch(e){linha('1. Escrita na própria loja: BLOQUEADA ❌ — '+(e.code||e.message),'bad');throw e}try{await storage.ref(outro).put(bytes,meta);linha('3. Escrita em outra loja: INDEVIDAMENTE PERMITIDA ❌','bad');try{await storage.ref(outro).delete()}catch(_){}}catch(e){linha('3. Escrita em outra loja: BLOQUEADA ✅ — '+(e.code||'storage/unauthorized'),'ok')}try{await storage.ref(txt).putString('teste',{contentType:'text/plain'});linha('4. Arquivo não-imagem: INDEVIDAMENTE PERMITIDO ❌','bad');try{await storage.ref(txt).delete()}catch(_){}}catch(e){linha('4. Arquivo não-imagem: BLOQUEADO ✅ — '+(e.code||'storage/unauthorized'),'ok')}linha('Teste finalizado. Envie um print desta tela.','muted')}catch(e){linha('Falha no teste: '+(e.message||e),'bad')}finally{b.disabled=false}}$('btn').onclick=testar;</script></body></html>
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Teste Storage · Interfood Homologação</title>
+<style>
+body{margin:0;background:#07101f;color:#fff;font-family:Arial,sans-serif}.wrap{max-width:760px;margin:auto;padding:24px}.card{background:#101827;border:1px solid #2b3648;border-radius:14px;padding:18px}.btn{width:100%;padding:13px;border:0;border-radius:10px;background:#ff6b00;color:#fff;font-weight:900;cursor:pointer}.btn[disabled]{opacity:.55;cursor:not-allowed}.ok{color:#7df0a5}.bad{color:#ff8b9b}.muted{color:#aab4c4;font-size:13px}.linha{padding:10px 0;border-bottom:1px solid #263247}
+</style>
+</head>
+<body>
+<div class="wrap"><div class="card">
+<h2>Teste de isolamento do Firebase Storage</h2>
+<p class="muted">HOMOLOGAÇÃO. O teste cria uma imagem mínima em caminho temporário da própria loja, apaga em seguida e tenta gravar em uma loja fictícia, que deve ser bloqueada pelas regras.</p>
+<div id="status" class="linha muted">Carregando módulos do teste...</div>
+<button id="btn" class="btn" type="button" disabled>Executar teste</button>
+<div id="out"></div>
+</div></div>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-storage-compat.js"></script>
+<script src="firebase-interfood-config-teste.js?v=2026.09.09.1"></script>
+<script src="firebase-auth-interfood-teste.js?v=2026.09.09.1"></script>
+<script>
+(function(){
+  const $=id=>document.getElementById(id);
+  const btn=$('btn'),out=$('out'),status=$('status');
+  function linha(texto,classe){
+    const d=document.createElement('div');
+    d.className='linha '+(classe||'');
+    d.textContent=texto;
+    out.appendChild(d);
+  }
+  function erroTexto(e){return String((e&&e.code)|| (e&&e.message) || e || 'erro desconhecido');}
+  async function usuarioAtual(auth){
+    if(auth.currentUser)return auth.currentUser;
+    return new Promise((resolve,reject)=>{
+      const timer=setTimeout(()=>{try{off()}catch(_){ } reject(new Error('Sessão não encontrada. Entre novamente como estabelecimento.'));},5000);
+      const off=auth.onAuthStateChanged(u=>{clearTimeout(timer);off();u?resolve(u):reject(new Error('Faça login como estabelecimento antes de abrir este teste.'));},e=>{clearTimeout(timer);off();reject(e);});
+    });
+  }
+  async function executar(){
+    btn.disabled=true; out.innerHTML=''; btn.textContent='Executando...';
+    try{
+      if(!window.InterfoodAuthTeste)throw new Error('Módulo de autenticação não carregou. Atualize a página.');
+      if(!window.firebase || !firebase.storage)throw new Error('Módulo Firebase Storage não carregou. Atualize a página.');
+      const ctx=await InterfoodAuthTeste.iniciar();
+      if(ctx.projectId!=='interliga-homologacao-eb0f2')throw new Error('Projeto incorreto. Teste bloqueado.');
+      const u=await usuarioAtual(ctx.auth);
+      const s=await ctx.db.collection('usuariosEstabelecimentos').doc(u.uid).get();
+      if(!s.exists)throw new Error('Vínculo do estabelecimento não encontrado.');
+      const p=s.data()||{};
+      if(p.ativo!==true||p.perfil!=='estabelecimento'||!p.franquiaId||!p.lojaId)throw new Error('Perfil não autorizado.');
+      linha('Conta autenticada: '+(u.email||u.uid));
+      linha('Loja vinculada: '+p.franquiaId+' / '+p.lojaId);
+
+      const storage=ctx.app.storage();
+      const bytes=new Uint8Array([137,80,78,71,13,10,26,10,0,0,0,0]);
+      const meta={contentType:'image/png'};
+      const ts=Date.now();
+      const proprio=`interfood/${p.franquiaId}/estabelecimentos/${p.lojaId}/produtos/__teste_storage_${ts}/foto`;
+      const outro=`interfood/${p.franquiaId}/estabelecimentos/__loja_nao_autorizada__/produtos/__teste_storage_${ts}/foto`;
+      const txt=`interfood/${p.franquiaId}/estabelecimentos/${p.lojaId}/produtos/__teste_storage_${ts}/arquivo.txt`;
+
+      const refProprio=storage.ref(proprio);
+      try{
+        await refProprio.put(bytes,meta);
+        linha('1. Escrita na própria loja: PERMITIDA ✅','ok');
+        await refProprio.delete();
+        linha('2. Limpeza do arquivo temporário: CONCLUÍDA ✅','ok');
+      }catch(e){
+        linha('1. Escrita na própria loja: BLOQUEADA ❌ — '+erroTexto(e),'bad');
+        throw e;
+      }
+
+      try{
+        await storage.ref(outro).put(bytes,meta);
+        linha('3. Escrita em outra loja: INDEVIDAMENTE PERMITIDA ❌','bad');
+        try{await storage.ref(outro).delete()}catch(_){ }
+      }catch(e){
+        linha('3. Escrita em outra loja: BLOQUEADA ✅ — '+erroTexto(e),'ok');
+      }
+
+      try{
+        await storage.ref(txt).putString('teste','raw',{contentType:'text/plain'});
+        linha('4. Arquivo não-imagem: INDEVIDAMENTE PERMITIDO ❌','bad');
+        try{await storage.ref(txt).delete()}catch(_){ }
+      }catch(e){
+        linha('4. Arquivo não-imagem: BLOQUEADO ✅ — '+erroTexto(e),'ok');
+      }
+      linha('Teste finalizado. Envie um print desta tela.','muted');
+    }catch(e){
+      linha('Falha no teste: '+erroTexto(e),'bad');
+    }finally{
+      btn.disabled=false; btn.textContent='Executar teste';
+    }
+  }
+
+  window.addEventListener('load',()=>{
+    try{
+      if(!window.firebase)throw new Error('Firebase não carregou.');
+      if(!window.InterfoodAuthTeste)throw new Error('Autenticação não carregou.');
+      if(typeof firebase.storage!=='function')throw new Error('Firebase Storage não carregou.');
+      status.textContent='Módulos carregados. Clique em Executar teste.';
+      status.className='linha ok';
+      btn.disabled=false;
+      btn.addEventListener('click',executar);
+    }catch(e){
+      status.textContent='Falha ao preparar o teste: '+erroTexto(e);
+      status.className='linha bad';
+      btn.disabled=true;
+    }
+  });
+})();
+</script>
+</body>
+</html>
