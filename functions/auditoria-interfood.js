@@ -125,7 +125,7 @@ exports.auditarPedidoInterfood = onDocumentWritten({
 
 exports.auditarFechamentoInterfood = onDocumentWritten({
   document: 'franquias/{franquiaId}/fechamentosInterfood/{fechamentoId}',
-  region: 'us-central1',
+  region: 'southamerica-east1',
   memory: '256MiB',
   timeoutSeconds: 30,
   maxInstances: 10
