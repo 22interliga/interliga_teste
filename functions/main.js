@@ -4,4 +4,5 @@ const fechamentos = require('./fechamentos-interfood');
 const push = require('./push-interfood');
 const cardapioImagem = require('./cardapio-imagem-appcheck');
 const auditoria = require('./auditoria-interfood');
-module.exports = Object.assign({}, base, seguro, fechamentos, push, cardapioImagem, auditoria);
+const limpezaDadosAuxiliares = require('./limpeza-dados-auxiliares');
+module.exports = Object.assign({}, base, seguro, fechamentos, push, cardapioImagem, auditoria, limpezaDadosAuxiliares);
