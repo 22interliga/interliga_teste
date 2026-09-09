@@ -35,11 +35,12 @@ A subcoleção `clientes/{uid}/enderecos` pode conter:
 - UF;
 - complemento;
 - indicador de endereço principal;
-- timestamps de criação/atualização.
+- timestamps de criação/atualização;
+- latitude e longitude quando o ponto tiver sido confirmado no mapa.
 
 O cliente autenticado pode cadastrar, editar, definir como principal e excluir seus próprios endereços pela tela oficial de homologação.
 
-O cálculo/validação de entrega pode utilizar coordenadas associadas ao endereço/pedido quando necessárias à rota e à área de atendimento. Coordenadas devem ser tratadas como dado operacional de localização e não devem ser copiadas para auditoria sem necessidade.
+O cálculo/validação de entrega utiliza coordenadas associadas ao endereço quando necessárias à área de atendimento. Coordenadas são dado operacional de localização e não devem ser copiadas para auditoria sem necessidade.
 
 ### Minimização
 No módulo de endereço analisado não há necessidade técnica identificada de CPF, RG ou data de nascimento. Não adicionar esses campos sem finalidade aprovada.
@@ -93,14 +94,50 @@ A tela oficial limita alteração à própria loja autenticada e relê o documen
 
 ## 5. Pedidos
 
-Pedidos são registros de negócio. Podem reunir dados necessários para execução e comprovação da operação, como:
-- cliente/vínculo do cliente;
+O backend oficial ativo `criarPedidoClienteSeguro` grava os pedidos em:
+`franquias/{franquiaId}/estabelecimentos/{lojaId}/pedidos/{pedidoId}`.
+
+### Campos persistidos atualmente
+O documento criado pelo backend contém:
+- `numero`;
+- `cliente` — nome do cliente;
+- `telefone` — telefone do cliente;
+- `entrega`;
+- `subtotalProdutos`;
+- `taxaEntrega`;
+- `valor`;
+- `itens` — produto, nome, variação, adicionais, quantidade, valor unitário e subtotal;
+- `endereco` — endereço textual validado para entrega, ou `Retirada no estabelecimento`;
+- `observacoes` — texto livre do cliente, limitado no backend;
+- `pagamento`;
+- `status`;
+- `clienteUid`;
+- `franquiaId`;
+- `lojaId`;
+- `criadoEm`;
+- `origem`;
+- `calculadoNoServidor`;
+- `appCheckValidado`;
+- `distanciaEntregaKm`;
+- `raioEntregaKm`;
+- `localizacaoEntrega` — quando a entrega é Interfood, contém `enderecoId`, latitude, longitude e método de confirmação;
+- `horarioValidado`;
+- `fusoHorario`.
+
+O backend não persiste o token de autenticação nem o token do App Check dentro do pedido. Esses tokens são usados somente para validação da requisição.
+
+### Dados pessoais presentes no pedido
+São dados pessoais ou potencialmente pessoais no contexto do pedido:
+- nome do cliente;
+- telefone;
+- UID do cliente;
 - endereço de entrega;
-- itens e valores;
-- estabelecimento;
-- status e timestamps;
-- entregador atribuído;
-- dados operacionais de entrega/incidentes.
+- latitude/longitude da entrega;
+- observações em texto livre, que podem conter informação fornecida pelo próprio cliente;
+- identificação operacional do entregador quando posteriormente atribuída.
+
+### Minimização e retenção
+O endereço e as coordenadas têm finalidade de execução/validação da entrega. O `enderecoId` mantém referência ao endereço salvo utilizado naquele pedido.
 
 Pedidos não participam da rotina automática `limparDadosAuxiliaresInterfood` e não possuem TTL nesta etapa.
 
@@ -151,7 +188,29 @@ Fechamentos, comissões congeladas, repasses, situação Pendente/Pago e referê
 
 Não possuem TTL nesta etapa e não entram na limpeza técnica automática. A retenção definitiva deve ser definida antes da produção conforme necessidades contratuais, fiscais, contábeis e de defesa de direitos.
 
-## 9. Classificação técnica atual
+## 9. Cloud Logging
+
+A homologação possui sanitização central de `console.log`, `console.warn` e `console.error` por `functions/logging-seguro.js`.
+
+Teste controlado realizado e validado em 09/09/2026 confirmou redação dos seguintes campos antes de chegarem ao Cloud Logging:
+- endereço;
+- CEP;
+- telefone;
+- token;
+- authorization;
+- App Check;
+- latitude;
+- longitude.
+
+No teste, esses valores apareceram como `[redigido]` no Cloud Logging.
+
+A função temporária usada exclusivamente para essa validação foi removida após o teste. O sanitizador permanente foi mantido.
+
+Bucket padrão de logs da homologação: `_Default`, localização `global`, retenção confirmada de 30 dias.
+
+Essa validação não significa que nenhum identificador técnico possa aparecer em logs. UIDs, IDs de pedido, franquia/loja, status e mensagens técnicas podem continuar sendo registrados quando necessários ao diagnóstico, desde que sem inclusão desnecessária de dados pessoais em claro.
+
+## 10. Classificação técnica atual
 
 ### Necessário para operação
 - identificação básica do cliente;
@@ -167,7 +226,8 @@ Não possuem TTL nesta etapa e não entram na limpeza técnica automática. A re
 - auditoria minimizada;
 - incidentes/desistências necessários ao tratamento operacional;
 - tokens push enquanto tecnicamente úteis;
-- rate limits por prazo curto.
+- rate limits por prazo curto;
+- logs técnicos com retenção limitada e sanitização de campos sensíveis.
 
 ### Evitar sem finalidade específica
 - CPF;
@@ -179,7 +239,7 @@ Não possuem TTL nesta etapa e não entram na limpeza técnica automática. A re
 - cópia de endereço/telefone/coordenadas na auditoria;
 - dados sensíveis em campos livres de incidente/desistência.
 
-## 10. Direitos do titular e processo a definir antes da produção
+## 11. Direitos do titular e processo a definir antes da produção
 
 Antes da migração, documentar um fluxo para solicitações relacionadas a:
 - confirmação e acesso aos dados;
@@ -191,27 +251,28 @@ Antes da migração, documentar um fluxo para solicitações relacionadas a:
 
 A exclusão da conta não deve ser implementada como exclusão cega de todo o histórico financeiro/operacional. O procedimento deverá distinguir dado cadastral eliminável, dado anonimizável e registro que precise ser preservado por fundamento aplicável.
 
-## 11. Pendências antes da produção
+## 12. Pendências antes da produção
 
 1. definir política jurídica definitiva de retenção para clientes e pedidos;
 2. definir processo formal de solicitação de exclusão/anônimização de conta;
 3. definir política de retenção de dados de entregadores e estabelecimentos desligados;
 4. revisar textos de privacidade/termos específicos do Interfood;
 5. revisar campos livres para reduzir risco de inserção de dados sensíveis;
-6. revisar Cloud Logging separadamente do Firestore;
-7. confirmar Storage Rules e política de arquivos/imagens;
-8. manter App Check geral sem enforcement até concluir os testes previstos;
-9. realizar backup antes de qualquer futura rotina de exclusão em massa;
-10. exigir autorização expressa antes de copiar qualquer política de TTL/limpeza para produção.
+6. confirmar Storage Rules e política de arquivos/imagens;
+7. manter App Check geral sem enforcement até concluir os testes previstos;
+8. realizar backup antes de qualquer futura rotina de exclusão em massa;
+9. exigir autorização expressa antes de copiar qualquer política de TTL/limpeza para produção.
 
-## 12. Estado atual
+## 13. Estado atual
 
 - inventário técnico de cliente: revisado;
 - endereços do cliente: revisados;
 - entregador: revisado;
 - estabelecimento: revisado;
+- campos efetivamente persistidos no pedido pelo backend: revisados;
 - auditoria: minimizada e com TTL técnico de homologação;
 - push/rate limit: retenção técnica separada;
+- Cloud Logging: sanitização validada e retenção de 30 dias confirmada;
 - pedidos/financeiro: preservados, sem TTL;
 - nenhuma exclusão em massa criada;
 - nenhuma alteração realizada na produção.
