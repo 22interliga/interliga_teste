@@ -3,6 +3,7 @@ const admin = require('firebase-admin');
 
 const PUSH_COLLECTION = 'pushTokensInterfood';
 const RATE_COLLECTION = 'rateLimitsInterfood';
+const EVENTOS_ESTATISTICAS_COLLECTION = 'eventosEstatisticasInterfood';
 const TOKEN_ATIVO_MAX_DIAS = 90;
 const TOKEN_INATIVO_RETENCAO_DIAS = 30;
 const RATE_RETENCAO_HORAS = 48;
@@ -93,6 +94,37 @@ async function limparRateLimits(db, agora) {
   return {lidos: snap.size, removidos};
 }
 
+
+async function limparEventosEstatisticas(db, agora) {
+  const limite = admin.firestore.Timestamp.fromMillis(agora);
+  const snap = await db
+    .collection(EVENTOS_ESTATISTICAS_COLLECTION)
+    .where('expiraEm', '<=', limite)
+    .limit(LIMITE_DOCS_POR_EXECUCAO)
+    .get();
+
+  let removidos = 0;
+  let batch = db.batch();
+  let ops = 0;
+
+  async function flush() {
+    if (!ops) return;
+    await batch.commit();
+    batch = db.batch();
+    ops = 0;
+  }
+
+  for (const d of snap.docs) {
+    batch.delete(d.ref);
+    ops++;
+    removidos++;
+    if (ops >= 400) await flush();
+  }
+
+  await flush();
+  return {lidos: snap.size, removidos};
+}
+
 exports.limparDadosAuxiliaresInterfood = onSchedule({
   schedule: '0 4 * * *',
   timeZone: 'America/Sao_Paulo',
@@ -103,14 +135,16 @@ exports.limparDadosAuxiliaresInterfood = onSchedule({
 }, async () => {
   const db = admin.firestore();
   const agora = Date.now();
-  const [push, rate] = await Promise.all([
+  const [push, rate, eventosEstatisticas] = await Promise.all([
     limparPush(db, agora),
-    limparRateLimits(db, agora)
+    limparRateLimits(db, agora),
+    limparEventosEstatisticas(db, agora)
   ]);
   console.log('LIMPEZA_DADOS_AUXILIARES_INTERFOOD', {
     ambiente: 'homologacao',
     push,
     rate,
+    eventosEstatisticas,
     politica: {
       tokenAtivoMaxDias: TOKEN_ATIVO_MAX_DIAS,
       tokenInativoRetencaoDias: TOKEN_INATIVO_RETENCAO_DIAS,
