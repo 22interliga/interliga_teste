@@ -1,0 +1,347 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Meus Repasses · Interfood</title>
+<style>
+:root{
+  --p:#ff6b00;--bg:#07101f;--card:#101827;--bd:#2b3648;
+  --muted:#9da9ba;--green:#22c55e;--amber:#f59e0b
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:#fff;font-family:Arial,sans-serif}
+.top{background:var(--p);padding:18px 22px}
+.brand{font-size:23px;font-weight:900}
+.sub,.small{font-size:12px;color:var(--muted)}
+.top .sub{color:#fff}
+.wrap{max-width:1180px;margin:auto;padding:20px}
+.notice{
+  padding:11px;border:1px solid #22c55e66;background:#22c55e18;
+  color:#86efac;border-radius:12px;margin-bottom:15px
+}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+.card{
+  background:var(--card);border:1px solid var(--bd);
+  border-radius:14px;padding:15px;margin-bottom:12px
+}
+.num{font-size:24px;font-weight:900}
+.actions{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap}
+.btn{
+  border:0;border-radius:9px;padding:10px 13px;
+  background:#3c4b61;color:#fff;font-weight:800;cursor:pointer
+}
+.filters{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:14px 0}
+.sel{
+  padding:11px;background:#172235;color:#fff;
+  border:1px solid var(--bd);border-radius:9px;width:100%
+}
+.table{overflow:auto}
+.tr{
+  display:grid;
+  grid-template-columns:1.2fr .6fr .8fr .8fr .8fr .7fr;
+  gap:8px;align-items:center;padding:11px 8px;
+  border-bottom:1px solid #243047
+}
+.head{font-size:12px;color:#94a3b8;font-weight:700}
+.right{text-align:right}
+.pill{display:inline-block;padding:4px 8px;border-radius:99px;font-size:11px}
+.pend{background:#f59e0b1c;color:#fbbf24}
+.pago{background:#22c55e1c;color:#86efac}
+.loading{display:flex;align-items:center;gap:12px;min-height:72px}
+.spinner{
+  width:22px;height:22px;border:3px solid #334155;
+  border-top-color:var(--p);border-radius:50%;
+  animation:girar .8s linear infinite
+}
+@keyframes girar{to{transform:rotate(360deg)}}
+.empty{text-align:center;color:var(--muted);padding:25px}
+.ref{margin-top:4px;font-size:11px;color:#94a3b8}
+.bad{color:#ff7188}
+@media(max-width:850px){
+  .stats{grid-template-columns:1fr 1fr}
+  .filters{grid-template-columns:1fr}
+  .tr{grid-template-columns:1.3fr .8fr .9fr}
+  .tr>*:nth-child(2),
+  .tr>*:nth-child(4),
+  .tr>*:nth-child(6){display:none}
+}
+@media(max-width:480px){.stats{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+
+<div class="top">
+  <div class="brand" id="brand">Meus Repasses · Interfood</div>
+  <div class="sub" id="sub">Homologação</div>
+</div>
+
+<div class="wrap">
+  <div class="notice">
+    AMBIENTE DE HOMOLOGAÇÃO — esta tela é somente leitura.
+    O estabelecimento visualiza exclusivamente os próprios fechamentos e repasses.
+  </div>
+
+  <div class="actions">
+    <button class="btn" onclick="voltar()">← Voltar ao painel</button>
+  </div>
+
+  <div id="app">
+    <div class="card loading">
+      <div class="spinner"></div>
+      <div>
+        <b>Carregando seus repasses...</b>
+        <div class="small">Validando estabelecimento autenticado.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js"></script>
+<script src="firebase-interfood-config-teste.js?v=2026.09.14.1"></script>
+<script src="firebase-auth-interfood-teste.js?v=2026.09.05.1"></script>
+
+<script>
+const $=id=>document.getElementById(id);
+const qs=k=>new URLSearchParams(location.search).get(k);
+
+let ctx=null;
+let perfil=null;
+let fechamentos=[];
+
+const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({
+  '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+}[m]));
+
+const money=n=>Number(n||0).toLocaleString('pt-BR',{
+  style:'currency',
+  currency:'BRL'
+});
+
+function voltar(){
+  if(!perfil)return history.back();
+
+  location.href=
+    'painel-estabelecimento-firebase-teste.html?franquia='+
+    encodeURIComponent(perfil.franquiaId)+
+    '&loja='+encodeURIComponent(perfil.lojaId);
+}
+
+function dataMs(v){
+  try{
+    if(v&&typeof v.toMillis==='function')return v.toMillis();
+    return 0;
+  }catch(_){
+    return 0;
+  }
+}
+
+function render(){
+  const status=$('fStatus')?.value||'';
+  const periodo=$('fPeriodo')?.value||'todos';
+
+  let inicio=0;
+
+  if(periodo==='7')inicio=Date.now()-7*86400000;
+  if(periodo==='30')inicio=Date.now()-30*86400000;
+  if(periodo==='90')inicio=Date.now()-90*86400000;
+
+  const base=fechamentos.filter(x=>
+    (!status||x.status===status) &&
+    (!inicio||dataMs(x.criadoEm)>=inicio)
+  );
+
+  const vendas=base.reduce((a,x)=>a+Number(x.vendas||0),0);
+  const comissao=base.reduce((a,x)=>a+Number(x.comissao||0),0);
+  const repasse=base.reduce((a,x)=>a+Number(x.repasse||0),0);
+
+  const pendente=base
+    .filter(x=>x.status==='Pendente')
+    .reduce((a,x)=>a+Number(x.repasse||0),0);
+
+  const pago=base
+    .filter(x=>x.status==='Pago')
+    .reduce((a,x)=>a+Number(x.repasse||0),0);
+
+  const linhas=base.map(x=>{
+    const referencia=x.status==='Pago'&&x.referenciaPagamento
+      ? '<div class="ref">Ref.: '+esc(x.referenciaPagamento)+'</div>'
+      : '';
+
+    return `
+      <div class="tr">
+        <div>
+          <b>${esc(x.inicioTexto||'—')} a ${esc(x.fimTexto||'—')}</b>
+          <div class="small">${Number(x.quantidadePedidos||0)} pedido(s)</div>
+        </div>
+
+        <div class="right">${money(x.vendas)}</div>
+
+        <div class="right">
+          ${Number(x.taxaComissao||0).toLocaleString('pt-BR')}%
+          <div class="small">${money(x.comissao)}</div>
+        </div>
+
+        <div class="right"><b>${money(x.repasse)}</b></div>
+
+        <div class="right">
+          <span class="pill ${x.status==='Pago'?'pago':'pend'}">
+            ${esc(x.status||'Pendente')}
+          </span>
+          ${referencia}
+        </div>
+
+        <div class="right small">
+          ${esc(x.id)}
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  $('app').innerHTML=`
+    <div class="stats">
+      <div class="card">
+        <div class="num">${base.length}</div>
+        <div class="small">Fechamentos</div>
+      </div>
+
+      <div class="card">
+        <div class="num">${money(vendas)}</div>
+        <div class="small">Vendas fechadas</div>
+      </div>
+
+      <div class="card">
+        <div class="num">${money(comissao)}</div>
+        <div class="small">Comissão descontada</div>
+      </div>
+
+      <div class="card">
+        <div class="num">${money(repasse)}</div>
+        <div class="small">Meus repasses</div>
+      </div>
+    </div>
+
+    <div class="card small">
+      Repasse pendente: <b>${money(pendente)}</b>
+      · Repasse pago: <b>${money(pago)}</b>
+    </div>
+
+    <div class="filters">
+      <select id="fStatus" class="sel" onchange="render()">
+        <option value="" ${!status?'selected':''}>Todos os status</option>
+        <option value="Pendente" ${status==='Pendente'?'selected':''}>Pendente</option>
+        <option value="Pago" ${status==='Pago'?'selected':''}>Pago</option>
+      </select>
+
+      <select id="fPeriodo" class="sel" onchange="render()">
+        <option value="todos" ${periodo==='todos'?'selected':''}>Todo o período</option>
+        <option value="7" ${periodo==='7'?'selected':''}>Últimos 7 dias</option>
+        <option value="30" ${periodo==='30'?'selected':''}>Últimos 30 dias</option>
+        <option value="90" ${periodo==='90'?'selected':''}>Últimos 90 dias</option>
+      </select>
+    </div>
+
+    <div class="card table">
+      <div class="tr head">
+        <div>Período / pedidos</div>
+        <div class="right">Vendas</div>
+        <div class="right">Comissão</div>
+        <div class="right">Repasse</div>
+        <div class="right">Situação</div>
+        <div class="right">ID</div>
+      </div>
+
+      ${linhas || '<div class="empty">Nenhum fechamento encontrado.</div>'}
+    </div>
+
+    <div class="card small">
+      Os valores desta tela vêm diretamente dos fechamentos já registrados.
+      A taxa de comissão exibida é a taxa congelada no momento de cada fechamento.
+      Este estabelecimento não possui permissão para alterar fechamentos ou pagamentos.
+    </div>
+  `;
+}
+
+async function iniciar(){
+  try{
+    ctx=await InterfoodAuthTeste.iniciar();
+
+    await new Promise((resolve,reject)=>{
+      const off=ctx.auth.onAuthStateChanged(u=>{
+        off();
+        u?resolve(u):reject(new Error('Sessão Firebase não encontrada.'));
+      },reject);
+    });
+
+    const u=ctx.auth.currentUser;
+
+    const s=await ctx.db
+      .collection('usuariosEstabelecimentos')
+      .doc(u.uid)
+      .get({source:'server'});
+
+    if(!s.exists)
+      throw new Error('Vínculo do estabelecimento não encontrado.');
+
+    perfil=s.data()||{};
+
+    if(perfil.ativo!==true||perfil.perfil!=='estabelecimento')
+      throw new Error('Acesso não autorizado.');
+
+    if(
+      qs('franquia')!==perfil.franquiaId ||
+      qs('loja')!==perfil.lojaId
+    ){
+      throw new Error('A URL não corresponde à loja autenticada.');
+    }
+
+    const lojaSnap=await ctx.db
+      .collection('franquias')
+      .doc(perfil.franquiaId)
+      .collection('estabelecimentos')
+      .doc(perfil.lojaId)
+      .get({source:'server'});
+
+    if(!lojaSnap.exists)
+      throw new Error('Estabelecimento não encontrado.');
+
+    const loja=lojaSnap.data()||{};
+
+    $('brand').textContent='Meus Repasses · '+(loja.nome||perfil.lojaId);
+    $('sub').textContent='Franquia '+perfil.franquiaId+' · '+u.email;
+
+    const snap=await ctx.db
+      .collection('franquias')
+      .doc(perfil.franquiaId)
+      .collection('fechamentosInterfood')
+      .where('lojaId','==',perfil.lojaId)
+      .get({source:'server'});
+
+    fechamentos=snap.docs.map(d=>({
+      id:d.id,
+      ...d.data()
+    }));
+
+    fechamentos.sort((a,b)=>
+      dataMs(b.criadoEm)-dataMs(a.criadoEm)
+    );
+
+    render();
+
+  }catch(e){
+    $('app').innerHTML=`
+      <div class="card">
+        <h2 class="bad">Acesso negado</h2>
+        <p>${esc(e.message||e)}</p>
+      </div>
+    `;
+  }
+}
+
+iniciar();
+</script>
+
+</body>
+</html>
