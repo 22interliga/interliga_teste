@@ -1,0 +1,6 @@
+# Dependências instaladas localmente
+node_modules/
+
+# Backups locais de segurança
+*.bak
+*.bak-*
