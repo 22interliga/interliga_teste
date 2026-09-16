@@ -54,7 +54,33 @@ service cloud.firestore {
     match /usuariosEstabelecimentos/{uid}{allow read:if (signedIn()&&request.auth.uid==uid)||(franqueadoAtivo()&&resource.data.franquiaId==minhaFranquiaFranqueado())||adminMasterAtivo();allow update:if franqueadoPodeAlternarAcessoEstabelecimento();allow create:if franqueadoPodeCriarAcessoEstabelecimento();allow delete:if false;}
     match /usuariosEntregadores/{uid}{allow read:if (signedIn()&&request.auth.uid==uid)||adminMasterAtivo();allow write:if false;}
     match /franqueados/{uid}{allow read:if (signedIn()&&request.auth.uid==uid)||adminMasterAtivo();allow write:if false;}
-    match /franquias/{fid}{allow read:if franqueadoDaFranquia(fid)||adminMasterAtivo();allow write:if false;match /estabelecimentos/{lojaId}{allow read:if souDonoDaLoja(fid,lojaId)||entregadorDaFranquia(fid)||franqueadoDaFranquia(fid)||clienteCadastrado()||adminMasterAtivo();allow create:if franqueadoPodeCriarEstabelecimento(fid,lojaId);allow update:if configuracaoOperacionalLojaValida(fid,lojaId)||comissaoInterfoodFranqueadoValida(fid);allow delete:if false;
+    match /franquias/{fid}{
+      allow read: if franqueadoDaFranquia(fid)||adminMasterAtivo();
+      allow create,delete: if false;
+      allow update: if adminMasterAtivo()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'nome',
+          'cidade',
+          'nomeApp',
+          'nomeInterfood',
+          'corPrimaria',
+          'corDestaque',
+          'corFundo',
+          'coresAreas',
+          'modulos',
+          'identidadeAtualizadaEm',
+          'identidadeAtualizadaPor'
+        ])
+        && request.resource.data.nomeApp is string
+        && request.resource.data.nomeInterfood is string
+        && request.resource.data.corPrimaria is string
+        && request.resource.data.corDestaque is string
+        && request.resource.data.corFundo is string
+        && request.resource.data.coresAreas is map
+        && request.resource.data.modulos is map
+        && request.resource.data.identidadeAtualizadaEm == request.time
+        && request.resource.data.identidadeAtualizadaPor == request.auth.uid;
+match /estabelecimentos/{lojaId}{allow read:if souDonoDaLoja(fid,lojaId)||entregadorDaFranquia(fid)||franqueadoDaFranquia(fid)||clienteCadastrado()||adminMasterAtivo();allow create:if franqueadoPodeCriarEstabelecimento(fid,lojaId);allow update:if configuracaoOperacionalLojaValida(fid,lojaId)||comissaoInterfoodFranqueadoValida(fid);allow delete:if false;
       match /cardapio/{produtoId}{allow read:if souDonoDaLoja(fid,lojaId)||franqueadoDaFranquia(fid)||clienteCadastrado()||adminMasterAtivo();allow create:if souDonoDaLoja(fid,lojaId)&&cardapioValido()&&request.resource.data.criadoEm==request.time&&request.resource.data.atualizadoEm==request.time;allow update:if souDonoDaLoja(fid,lojaId)&&cardapioValido()&&request.resource.data.criadoEm==resource.data.criadoEm&&request.resource.data.atualizadoEm==request.time;allow delete:if false;}
       match /categoriasCardapio/{categoriaId}{allow read:if souDonoDaLoja(fid,lojaId)||franqueadoDaFranquia(fid)||clienteCadastrado()||adminMasterAtivo();allow create:if souDonoDaLoja(fid,lojaId)&&categoriaCardapioValida()&&request.resource.data.criadoEm==request.time&&request.resource.data.atualizadoEm==request.time;allow update:if souDonoDaLoja(fid,lojaId)&&categoriaCardapioValida()&&request.resource.data.criadoEm==resource.data.criadoEm&&request.resource.data.atualizadoEm==request.time;allow delete:if false;}
       match /pedidos/{pedidoId}{allow read:if souDonoDaLoja(fid,lojaId)||entregadorPodeLerPedido(fid)||franqueadoDaFranquia(fid)||clienteEhDonoDoPedido()||adminMasterAtivo();allow create:if false;allow update:if (souDonoDaLoja(fid,lojaId)&&((somenteStatusFoiAlterado()&&transicaoStatusEstabelecimentoValida())||cancelamentoEstabelecimentoValido()))||(entregadorDaFranquia(fid)&&(transicaoEntregadorValida()||desistirEntregaValido()||incidenteEntregaValido()))||gestaoOcorrenciaFranqueadoValida(fid)||cancelamentoClienteValido();allow delete:if false;}
