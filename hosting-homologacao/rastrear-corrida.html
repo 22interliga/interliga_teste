@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+
+  <title>Acompanhar corrida | Interliga</title>
+
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+  >
+
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      margin: 0;
+      width: 100%;
+      min-height: 100%;
+      font-family: Arial, Helvetica, sans-serif;
+      background: #f4f6f9;
+      color: #172033;
+    }
+
+    .topo {
+      background: #fff;
+      padding: 16px 18px;
+      border-bottom: 1px solid #e7eaf0;
+    }
+
+    .marca {
+      font-size: 21px;
+      font-weight: 800;
+    }
+
+    .subtitulo {
+      margin-top: 3px;
+      color: #687386;
+      font-size: 13px;
+    }
+
+    .conteudo {
+      max-width: 760px;
+      margin: 0 auto;
+      padding: 14px;
+    }
+
+    .card {
+      background: #fff;
+      border-radius: 16px;
+      padding: 16px;
+      margin-bottom: 12px;
+      box-shadow: 0 3px 14px rgba(0,0,0,.06);
+    }
+
+    #mapa {
+      width: 100%;
+      height: 52vh;
+      min-height: 330px;
+      border-radius: 14px;
+      overflow: hidden;
+      background: #e9edf3;
+    }
+
+    .status {
+      font-weight: 800;
+      font-size: 17px;
+      margin-bottom: 7px;
+    }
+
+    .info {
+      font-size: 14px;
+      color: #5f6979;
+      line-height: 1.55;
+    }
+
+    .seguranca {
+      font-size: 12px;
+      color: #778195;
+      text-align: center;
+      padding: 4px 12px 18px;
+    }
+
+    .erro {
+      color: #a31d1d;
+    }
+  </style>
+</head>
+
+<body>
+
+  <header class="topo">
+    <div class="marca">Interliga</div>
+    <div class="subtitulo">Acompanhamento de corrida</div>
+  </header>
+
+  <main class="conteudo">
+
+    <section class="card">
+      <div id="status" class="status">
+        Preparando acompanhamento...
+      </div>
+
+      <div id="info" class="info">
+        Aguarde alguns instantes.
+      </div>
+    </section>
+
+    <section class="card">
+      <div id="mapa"></div>
+    </section>
+
+    <div class="seguranca">
+      Link temporário de acompanhamento da corrida.
+    </div>
+
+  </main>
+
+  <script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js">
+  </script>
+
+  <script type="module">
+
+    const statusEl = document.getElementById('status');
+    const infoEl = document.getElementById('info');
+
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get('t');
+
+    let mapa = null;
+    let marcadorMotorista = null;
+    let marcadorOrigem = null;
+    let marcadorDestino = null;
+
+    function mostrarErro(texto) {
+      statusEl.textContent = 'Acompanhamento indisponível';
+      statusEl.classList.add('erro');
+      infoEl.textContent = texto;
+    }
+
+    function iniciarMapa() {
+      mapa = L.map('mapa', {
+        zoomControl: true,
+        attributionControl: true
+      }).setView([-12.7375, -38.6285], 13);
+
+      L.tileLayer(
+        'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+        {
+          maxZoom: 19,
+          attribution: '&copy; OpenStreetMap'
+        }
+      ).addTo(mapa);
+    }
+
+    function atualizarMotorista(lat, lon) {
+
+      if (!mapa) return;
+
+      const posicao = [lat, lon];
+
+      if (!marcadorMotorista) {
+
+        marcadorMotorista = L.marker(posicao, {
+          icon: L.divIcon({
+            className: '',
+            html:
+              '<div style="' +
+              'font-size:28px;' +
+              'filter:drop-shadow(0 2px 3px rgba(0,0,0,.35))' +
+              '">🚗</div>',
+            iconSize: [34, 34],
+            iconAnchor: [17, 17]
+          })
+        }).addTo(mapa);
+
+      } else {
+
+        marcadorMotorista.setLatLng(posicao);
+
+      }
+
+      mapa.panTo(posicao);
+    }
+
+    iniciarMapa();
+
+    if (!token) {
+
+      mostrarErro(
+        'Este link não possui um código de acompanhamento válido.'
+      );
+
+    } else {
+
+      statusEl.textContent = 'Aguardando dados da corrida';
+      infoEl.textContent =
+        'O acompanhamento será iniciado quando o compartilhamento estiver disponível.';
+
+      /*
+       * ETAPA 81:
+       *
+       * A página pública está criada, mas propositalmente
+       * ainda NÃO consulta o Firestore.
+       *
+       * Na próxima etapa será conectada exclusivamente
+       * à coleção pública protegida por token.
+       *
+       * Nunca consultar /corridas diretamente nesta página.
+       */
+
+    }
+
+  </script>
+
+</body>
+</html>

@@ -9,5 +9,14 @@
   },
   "storage": {
     "rules": "storage.rules"
+  },
+  "hosting": {
+    "site": "interliga-homologacao-eb0f2",
+    "public": "hosting-homologacao",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ]
   }
 }
