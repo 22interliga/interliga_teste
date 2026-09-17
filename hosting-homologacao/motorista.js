@@ -1098,11 +1098,15 @@ async function atualizarMetricasOferta(corrida) {
   if (Number.isFinite(mLat) && Number.isFinite(mLon) && coords.origemValida) {
     const rotaBusca = await calcularRotaOferta(mLat, mLon, coords.origemLat, coords.origemLon);
     if (rotaBusca && rotaBusca.km >= 0) {
-      if (elAtePax) elAtePax.textContent = rotaBusca.km.toFixed(1) + ' km';
+      if (elAtePax) elAtePax.textContent = rotaBusca.km < 1
+        ? Math.max(1, Math.round(rotaBusca.km * 1000)) + ' m'
+        : rotaBusca.km.toFixed(1) + ' km';
       if (elTempo) elTempo.textContent = '~' + rotaBusca.min + ' min';
     } else {
       const kmAte = haversineKm(mLat, mLon, coords.origemLat, coords.origemLon);
-      if (elAtePax) elAtePax.textContent = kmAte.toFixed(1) + ' km';
+      if (elAtePax) elAtePax.textContent = kmAte < 1
+        ? Math.max(1, Math.round(kmAte * 1000)) + ' m'
+        : kmAte.toFixed(1) + ' km';
       if (elTempo) elTempo.textContent = '~' + Math.max(1, Math.round((kmAte / 25) * 60)) + ' min';
     }
   } else {
