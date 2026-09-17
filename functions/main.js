@@ -7,4 +7,6 @@ const cardapioImagem = require('./cardapio-imagem-appcheck');
 const auditoria = require('./auditoria-interfood');
 const limpezaDadosAuxiliares = require('./limpeza-dados-auxiliares');
 const estatisticasPedidos = require('./estatisticas-pedidos-interfood');
-module.exports = Object.assign({}, base, seguro, fechamentos, push, cardapioImagem, auditoria, limpezaDadosAuxiliares, estatisticasPedidos);
+const rastreamentoPublico = require('./rastreamento-publico');
+const avaliacoesMobilidade = require('./avaliacoes-mobilidade');
+module.exports = Object.assign({}, base, seguro, fechamentos, push, cardapioImagem, auditoria, limpezaDadosAuxiliares, estatisticasPedidos, rastreamentoPublico, avaliacoesMobilidade);

@@ -2049,12 +2049,30 @@ document.querySelectorAll('#avaliar-pax-estrelas span').forEach(el => {
   });
 });
 
-document.getElementById('btn-enviar-avaliacao-passageiro')?.addEventListener('click', async () => {
+document.getElementById('btn-enviar-avaliacao-passageiro')?.addEventListener('click', async (event) => {
   if (notaSelecionadaPassageiro === 0) { showToast('⚠️ Toca numa estrela pra dar a nota'); return; }
+
+  const btn = event.currentTarget;
+  const textoOriginal = btn.textContent;
   const comentario = document.getElementById('avaliar-pax-comentario').value.trim();
-  await enviarAvaliacao('passageiro', avaliarPassageiroId, notaSelecionadaPassageiro, comentario, avaliarCorridaIdMotorista);
-  showToast('✅ Avaliação enviada!');
-  go('screen-home');
+
+  btn.disabled = true;
+  btn.textContent = 'Enviando...';
+
+  try {
+    await enviarAvaliacao('passageiro', avaliarPassageiroId, notaSelecionadaPassageiro, comentario, avaliarCorridaIdMotorista);
+
+    btn.textContent = '✓ Avaliação enviada';
+    showToast('✅ Avaliação enviada!');
+
+    await new Promise(resolve => setTimeout(resolve, 1200));
+    go('screen-home');
+  } catch (e) {
+    console.error('[motorista] erro ao enviar avaliação:', e);
+    btn.disabled = false;
+    btn.textContent = textoOriginal;
+    showToast('⚠️ ' + (e?.message || 'Não foi possível enviar a avaliação.'));
+  }
 });
 
 document.getElementById('link-pular-avaliacao-passageiro')?.addEventListener('click', () => go('screen-home'));
@@ -2062,30 +2080,44 @@ document.getElementById('link-pular-avaliacao-passageiro')?.addEventListener('cl
 // Atualiza a média de avaliação de forma segura mesmo com várias avaliações
 // chegando ao mesmo tempo (usa transação do Firebase).
 async function enviarAvaliacao(tipo, paraId, nota, comentario, corridaId) {
-  if (!firebaseReady || !db || !paraId) return;
-  const colecao = tipo === 'motorista' ? 'motoristas' : 'passageiros';
-  try {
-    await fb.addDoc(fb.collection(db, 'avaliacoes'), {
-      tipo, paraId, nota, comentario, corridaId,
-      criadoEm: fb.serverTimestamp(),
-    });
-    await fb.runTransaction(db, async (tx) => {
-      const ref = fb.doc(db, colecao, paraId);
-      const snap = await tx.get(ref);
-      const dados = snap.data() || {};
-      const totalAtual = Number(dados.totalAvaliacoes || 0);
-      const somaAtual = Number(dados.somaAvaliacoes || 0);
-      const novoTotal = totalAtual + 1;
-      const novaSoma = somaAtual + nota;
-      tx.update(ref, {
-        totalAvaliacoes: novoTotal,
-        somaAvaliacoes: novaSoma,
-        avaliacao: (novaSoma / novoTotal).toFixed(1),
-      });
-    });
-  } catch (e) {
-    console.warn('[motorista] erro ao enviar avaliação:', e);
+  if (!firebaseReady || !authMotorista?.currentUser) {
+    throw new Error('Sessão do motorista não disponível.');
   }
+
+  if (!paraId || !corridaId) {
+    throw new Error('Dados da avaliação incompletos.');
+  }
+
+  const token = await authMotorista.currentUser.getIdToken();
+
+  const resp = await fetch(
+    'https://us-central1-interliga-homologacao-eb0f2.cloudfunctions.net/enviarAvaliacaoMobilidade',
+    {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        tipo,
+        paraId,
+        nota,
+        comentario,
+        corridaId
+      })
+    }
+  );
+
+  let dados = {};
+  try {
+    dados = await resp.json();
+  } catch (_) {}
+
+  if (!resp.ok || dados.ok !== true) {
+    throw new Error(dados.erro || 'Não foi possível enviar a avaliação.');
+  }
+
+  return dados;
 }
 
 // ─────────────────────────────────────
