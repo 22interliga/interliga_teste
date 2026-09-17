@@ -1,12 +1,12 @@
 const {onRequest} = require('firebase-functions/v2/https');
 const admin = require('firebase-admin');
 
-const ALLOWED_ORIGIN = 'https://22interliga.github.io';
+const ALLOWED_ORIGINS = new Set(['https://22interliga.github.io','https://interliga-homologacao-eb0f2.web.app']);
 const FUSO_OPERACAO = 'America/Bahia';
 
 function cors(req,res){
   const origin=req.get('origin');
-  if(origin===ALLOWED_ORIGIN)res.set('Access-Control-Allow-Origin',origin);
+  if(ALLOWED_ORIGINS.has(origin))res.set('Access-Control-Allow-Origin',origin);
   res.set('Vary','Origin');
   res.set('Access-Control-Allow-Headers','Authorization, Content-Type, X-Firebase-AppCheck');
   res.set('Access-Control-Allow-Methods','POST, OPTIONS');
@@ -68,7 +68,7 @@ function selecionarPrecoProduto(produto,item){
 }
 
 exports.criarPedidoClienteSeguro = onRequest({region:'us-central1',timeoutSeconds:60,memory:'256MiB',maxInstances:10},async(req,res)=>{
-  cors(req,res);if(req.method==='OPTIONS')return res.status(204).send('');if(req.method!=='POST')return res.status(405).json({error:'Método não permitido.'});if(req.get('origin')&&req.get('origin')!==ALLOWED_ORIGIN)return res.status(403).json({error:'Origem não autorizada.'});
+  cors(req,res);if(req.method==='OPTIONS')return res.status(204).send('');if(req.method!=='POST')return res.status(405).json({error:'Método não permitido.'});if(req.get('origin')&&ALLOWED_ORIGINS.has(req.get('origin'))===false)return res.status(403).json({error:'Origem não autorizada.'});
   try{
     await verificarAppCheck(req);
     const {uid,perfil}=await autenticarCliente(req),body=req.body||{};
@@ -88,7 +88,7 @@ exports.criarPedidoClienteSeguro = onRequest({region:'us-central1',timeoutSecond
       if(distanciaEntregaKm>raio)throw erro('Endereço fora da área de entrega. Distância aproximada: '+distanciaEntregaKm.toFixed(2).replace('.',',')+' km; limite da loja: '+raio.toFixed(1).replace('.',',')+' km.',422);
       localizacaoEntrega={enderecoId,latitude:geoCliente.lat,longitude:geoCliente.lon,metodo:'ponto-confirmado'};
     }
-    const ref=lojaRef.collection('pedidos').doc(),numero='PED-'+ref.id.slice(0,8).toUpperCase();const pedido={numero,cliente:String(perfil.nome||'').slice(0,120),telefone:String(perfil.telefone||'').slice(0,30),entrega,subtotalProdutos:subtotalCent/100,taxaEntrega:taxaCent/100,valor:totalCent/100,itens,endereco:enderecoValidado,observacoes,pagamento,status:'Novo',clienteUid:uid,franquiaId,lojaId,criadoEm:admin.firestore.FieldValue.serverTimestamp(),origem:'cliente-homologacao-backend-coordenadas-appcheck',calculadoNoServidor:true,appCheckValidado:true,distanciaEntregaKm,raioEntregaKm,localizacaoEntrega,horarioValidado:true,fusoHorario:FUSO_OPERACAO};await ref.set(pedido);
+    const ref=lojaRef.collection('pedidos').doc(),numero='PED-'+ref.id.slice(0,8).toUpperCase();const pedido={numero,cliente:String(perfil.nome||'').slice(0,120),telefone:String(perfil.telefone||'').slice(0,30),entrega,operadorEntrega:entrega==='Interfood'?'Intermobilidade':null,statusEntrega:entrega==='Interfood'?'aguardando_despacho':null,subtotalProdutos:subtotalCent/100,taxaEntrega:taxaCent/100,valor:totalCent/100,itens,endereco:enderecoValidado,observacoes,pagamento,status:'Novo',clienteUid:uid,franquiaId,lojaId,criadoEm:admin.firestore.FieldValue.serverTimestamp(),origem:'cliente-homologacao-backend-coordenadas-appcheck',calculadoNoServidor:true,appCheckValidado:true,distanciaEntregaKm,raioEntregaKm,localizacaoEntrega,horarioValidado:true,fusoHorario:FUSO_OPERACAO};await ref.set(pedido);
     return res.status(200).json({ok:true,pedidoId:ref.id,numero,subtotalProdutos:subtotalCent/100,taxaEntrega:taxaCent/100,valor:totalCent/100,distanciaEntregaKm,raioEntregaKm,metodoArea:entrega==='Interfood'?'coordenadas-confirmadas':'retirada',horarioValidado:true,appCheckValidado:true});
   }catch(e){console.error('criarPedidoClienteSeguro coordenadas',e);const status=Number(e?.status)||500;return res.status(status).json({error:status>=500?'Não foi possível concluir o pedido agora.':String(e.message||e)});}
 });
