@@ -92,6 +92,136 @@ match /estabelecimentos/{lojaId}{allow read:if souDonoDaLoja(fid,lojaId)||entreg
         allow create,update,delete:if false;
       }
     }
+
+    // ============================================================
+    // MOBILIDADE — HOMOLOGACAO
+    // Regras endurecidas em 2026-09-16
+    // Mantido separado das regras do Interfood.
+    // ============================================================
+
+    match /corridas/{corridaId} {
+
+      // Corridas aguardando ficam visiveis aos motoristas autenticados.
+      // Depois do aceite, somente participantes e gestores.
+      allow read: if signedIn() && (
+        resource.data.status == 'aguardando' ||
+        request.auth.uid == resource.data.passageiroId ||
+        request.auth.uid == resource.data.motoristaId ||
+        adminMasterAtivo() ||
+        franqueadoAtivo()
+      );
+
+      // Passageiro cria somente corrida propria e inicialmente aguardando.
+      allow create: if signedIn()
+        && request.resource.data.passageiroId == request.auth.uid
+        && request.resource.data.status == 'aguardando'
+        && !request.resource.data.keys().hasAny([
+          'motoristaId',
+          'motoristaNome',
+          'motoristaVeiculo',
+          'motoristaPlaca',
+          'motoristaAvaliacao',
+          'motoristaSelfie',
+          'motoristaLat',
+          'motoristaLon'
+        ]);
+
+      // Passageiro dono:
+      // mantém identidade da corrida e não pode se atribuir como motorista.
+      //
+      // Motorista:
+      // pode operar corrida aguardando ou já atribuída a ele.
+      //
+      // Gestores:
+      // mantidos para operação administrativa da homologação.
+      allow update: if signedIn() && (
+
+        (
+          request.auth.uid == resource.data.passageiroId
+          && request.resource.data.passageiroId == resource.data.passageiroId
+          && request.resource.data.motoristaId == resource.data.motoristaId
+        )
+
+        ||
+
+        (
+          (
+            resource.data.status == 'aguardando' ||
+            request.auth.uid == resource.data.motoristaId
+          )
+          &&
+          request.resource.data.passageiroId == resource.data.passageiroId
+        )
+
+        ||
+
+        adminMasterAtivo()
+        ||
+
+        franqueadoAtivo()
+      );
+
+      allow delete: if false;
+
+      match /mensagens/{mensagemId} {
+        allow read, write: if signedIn() && (
+          request.auth.uid ==
+            get(/databases/$(database)/documents/corridas/$(corridaId)).data.passageiroId ||
+          request.auth.uid ==
+            get(/databases/$(database)/documents/corridas/$(corridaId)).data.motoristaId ||
+          adminMasterAtivo() ||
+          franqueadoAtivo()
+        );
+      }
+    }
+
+    match /motoristas/{motoristaId} {
+      allow read: if signedIn();
+
+      allow create: if signedIn()
+        && request.auth.uid == motoristaId;
+
+      allow update: if signedIn() && (
+        request.auth.uid == motoristaId ||
+        adminMasterAtivo() ||
+        franqueadoAtivo()
+      );
+
+      allow delete: if adminMasterAtivo();
+    }
+
+    match /passageiros/{uid} {
+      allow read: if signedIn();
+
+      allow create: if signedIn()
+        && request.auth.uid == uid;
+
+      allow update: if signedIn() && (
+        request.auth.uid == uid ||
+        adminMasterAtivo() ||
+        franqueadoAtivo()
+      );
+
+      allow delete: if false;
+    }
+
+    match /motoristas_disponiveis/{motoristaId} {
+      allow read: if signedIn();
+
+      allow create, update, delete: if signedIn()
+        && request.auth.uid == motoristaId;
+    }
+
+    match /precos/{cidadeId} {
+      allow read: if signedIn();
+      allow write: if adminMasterAtivo() || franqueadoAtivo();
+    }
+
+    match /categorias_veiculo/{catId} {
+      allow read: if signedIn();
+      allow write: if adminMasterAtivo() || franqueadoAtivo();
+    }
+
     match /{document=**}{allow read,write:if false;}
   }
 }
