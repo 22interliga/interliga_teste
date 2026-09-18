@@ -342,6 +342,78 @@
         </div>
       </div>
 
+
+      <!-- Próxima corrida: oferta isolada da corrida atualmente em andamento -->
+      <div id="proxima-corrida-card"
+           hidden
+           style="margin:12px 0;padding:14px;border:1px solid var(--orange);border-radius:14px;background:var(--surface);">
+
+        <div style="font-size:12px;font-weight:800;color:var(--orange);margin-bottom:5px;">
+          🚗 PRÓXIMA CORRIDA
+        </div>
+
+        <div style="font-size:13px;color:var(--text-soft);margin-bottom:12px;">
+          Você pode reservar esta corrida e atendê-la assim que finalizar a atual.
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px;">
+          <div>
+            <div style="font-size:11px;color:var(--text-soft);">Buscar passageiro em</div>
+            <div id="proxima-corrida-origem"
+                 style="font-size:13px;font-weight:700;color:var(--text);">
+              —
+            </div>
+          </div>
+
+          <div>
+            <div style="font-size:11px;color:var(--text-soft);">Destino</div>
+            <div id="proxima-corrida-destino"
+                 style="font-size:13px;font-weight:700;color:var(--text);">
+              —
+            </div>
+          </div>
+        </div>
+
+        <div style="display:flex;justify-content:space-between;gap:10px;margin-bottom:12px;">
+          <div>
+            <div style="font-size:11px;color:var(--text-soft);">Passageiro</div>
+            <div id="proxima-corrida-passageiro"
+                 style="font-size:13px;font-weight:700;color:var(--text);">
+              —
+            </div>
+          </div>
+
+          <div style="text-align:right;">
+            <div style="font-size:11px;color:var(--text-soft);">Valor</div>
+            <div id="proxima-corrida-valor"
+                 style="font-size:14px;font-weight:800;color:var(--orange);">
+              R$ —
+            </div>
+          </div>
+        </div>
+
+        <div id="proxima-corrida-status"
+             style="font-size:12px;color:var(--text-soft);margin-bottom:10px;">
+          Aguardando sua decisão
+        </div>
+
+        <div style="display:flex;gap:8px;">
+          <button class="btn-reject"
+                  id="btn-recusar-proxima-corrida"
+                  type="button"
+                  style="flex:1;">
+            ✕ Recusar
+          </button>
+
+          <button class="btn-accept"
+                  id="btn-aceitar-proxima-corrida"
+                  type="button"
+                  style="flex:1;">
+            ✓ Reservar próxima
+          </button>
+        </div>
+      </div>
+
       <button class="btn-arrived" id="btn-cheguei"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-3px;margin-right:6px"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>Avisar que cheguei</button>
       <button class="btn-primary" id="btn-iniciar-viagem" hidden>▶ Iniciar viagem</button>
       <button class="btn-arrived" id="btn-seguir-viagem" hidden>▶ Seguir viagem (próxima parada/destino)</button>

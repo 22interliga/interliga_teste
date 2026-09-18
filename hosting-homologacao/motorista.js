@@ -212,6 +212,11 @@ const state = {
   online: false,
   corridaAtualId: null,
   corridaAtual: null,
+
+  // Próxima corrida reservada.
+  // NUNCA substitui corridaAtual enquanto a viagem atual estiver ativa.
+  proximaCorridaId: null,
+  proximaCorrida: null,
   countdownInterval: null,
   corridaChegouEm: null,
   countdownSegundos: 15,
@@ -264,6 +269,591 @@ document.addEventListener('click', (e) => {
   }
   go(destino);
 });
+
+
+// ─────────────────────────────────────
+// PRÓXIMA CORRIDA RESERVADA
+// Mantida separada da corrida em andamento.
+// Nesta etapa ainda NÃO aceita nem grava reserva no Firestore.
+// ─────────────────────────────────────
+const CHAVE_PROXIMA_CORRIDA = 'interliga_mot_proxima_corrida';
+let proximaCorridaListenerUnsub = null;
+
+function salvarProximaCorridaLocal(corrida) {
+  if (!corrida?.id) return false;
+
+  state.proximaCorridaId = corrida.id;
+  state.proximaCorrida = corrida;
+
+  try {
+    localStorage.setItem(CHAVE_PROXIMA_CORRIDA, JSON.stringify({
+      corridaId: corrida.id,
+      origem: corrida.origem || null,
+      destino: corrida.destino || null,
+      passageiroId: corrida.passageiroId || null,
+      passageiroNome: corrida.passageiroNome || null,
+      passageiroSelfie: corrida.passageiroSelfie || null,
+      preco: corrida.preco ?? null,
+      reservadoEm: Date.now(),
+    }));
+  } catch (e) {
+    console.warn('[motorista] não foi possível persistir próxima corrida:', e);
+  }
+
+  return true;
+}
+
+
+
+function esconderCardProximaCorrida() {
+  const card = document.getElementById('proxima-corrida-card');
+  if (card) card.hidden = true;
+}
+
+function formatarEnderecoProximaCorrida(valor) {
+  if (!valor) return '—';
+
+  if (typeof valor === 'string') return valor;
+
+  return (
+    valor.endereco ||
+    valor.descricao ||
+    valor.nome ||
+    valor.address ||
+    '—'
+  );
+}
+
+function mostrarCardProximaCorrida(corrida, reservada = false) {
+  if (!corrida) {
+    esconderCardProximaCorrida();
+    return;
+  }
+
+  const card = document.getElementById('proxima-corrida-card');
+  if (!card) return;
+
+  const origem = document.getElementById('proxima-corrida-origem');
+  const destino = document.getElementById('proxima-corrida-destino');
+  const passageiro = document.getElementById('proxima-corrida-passageiro');
+  const valor = document.getElementById('proxima-corrida-valor');
+  const status = document.getElementById('proxima-corrida-status');
+  const btnAceitar = document.getElementById('btn-aceitar-proxima-corrida');
+  const btnRecusar = document.getElementById('btn-recusar-proxima-corrida');
+
+  if (origem) {
+    origem.textContent = formatarEnderecoProximaCorrida(corrida.origem);
+  }
+
+  if (destino) {
+    destino.textContent = formatarEnderecoProximaCorrida(corrida.destino);
+  }
+
+  if (passageiro) {
+    passageiro.textContent =
+      corrida.passageiroNome ||
+      corrida.nomePassageiro ||
+      'Passageiro';
+  }
+
+  const precoNumero = Number(
+    corrida.preco ??
+    corrida.valor ??
+    corrida.valorCorrida ??
+    0
+  );
+
+  if (valor) {
+    valor.textContent = precoNumero > 0
+      ? precoNumero.toLocaleString(
+          'pt-BR',
+          { style: 'currency', currency: 'BRL' }
+        )
+      : 'R$ —';
+  }
+
+  if (reservada) {
+    if (status) {
+      status.textContent =
+        '✅ Próxima corrida reservada. Finalize a corrida atual para seguir até o próximo passageiro.';
+    }
+
+    if (btnAceitar) btnAceitar.hidden = true;
+    if (btnRecusar) btnRecusar.hidden = true;
+  } else {
+    if (status) {
+      status.textContent =
+        'O passageiro aguarda sua decisão. Esta corrida só começa após a finalização da atual.';
+    }
+
+    if (btnAceitar) {
+      btnAceitar.hidden = false;
+      btnAceitar.disabled = false;
+      btnAceitar.textContent = '✓ Reservar próxima';
+    }
+
+    if (btnRecusar) {
+      btnRecusar.hidden = false;
+      btnRecusar.disabled = false;
+    }
+  }
+
+  card.hidden = false;
+}
+
+function pararEscutaProximaCorrida() {
+  if (proximaCorridaListenerUnsub) {
+    try { proximaCorridaListenerUnsub(); } catch (e) {}
+    proximaCorridaListenerUnsub = null;
+  }
+}
+
+function iniciarEscutaProximaCorrida() {
+  pararEscutaProximaCorrida();
+
+  console.log('[motorista][proxima-listener] tentativa de iniciar', {
+    firebaseReady,
+    temDb: !!db,
+    meuMotoristaId,
+    online: state.online,
+    corridaAtualId: state.corridaAtualId,
+    chegouAoCliente,
+    proximaCorridaId: state.proximaCorridaId || null
+  });
+
+  if (!firebaseReady || !db || !meuMotoristaId) {
+    console.warn('[motorista][proxima-listener] BLOQUEADO_FIREBASE_UID');
+    return;
+  }
+
+  if (!state.online) {
+    console.warn('[motorista][proxima-listener] BLOQUEADO_OFFLINE');
+    return;
+  }
+
+  // Esta escuta existe SOMENTE enquanto há uma corrida atual já no
+  // estágio final e ainda não existe uma próxima corrida reservada.
+  if (!state.corridaAtualId || !chegouAoCliente) {
+    console.warn('[motorista][proxima-listener] BLOQUEADO_ESTADO', {
+      corridaAtualId: state.corridaAtualId,
+      chegouAoCliente
+    });
+    return;
+  }
+
+  if (state.proximaCorridaId) {
+    console.warn(
+      '[motorista][proxima-listener] BLOQUEADO_PROXIMA_EXISTENTE',
+      state.proximaCorridaId
+    );
+    return;
+  }
+
+  const q = fb.query(
+    fb.collection(db, 'corridas'),
+    fb.where('status', '==', 'aguardando')
+  );
+
+  console.log('[motorista][proxima-listener] ESCUTA_ATIVA');
+
+  proximaCorridaListenerUnsub = fb.onSnapshot(q, (snap) => {
+    if (!state.online || !state.corridaAtualId || !chegouAoCliente) {
+      pararEscutaProximaCorrida();
+      return;
+    }
+
+    if (state.proximaCorridaId) {
+      pararEscutaProximaCorrida();
+      return;
+    }
+
+    let candidata = null;
+
+    snap.forEach(docSnap => {
+      if (candidata) return;
+
+      const d = docSnap.data();
+      if (!d) return;
+
+      const expira = Number(d.ofertaExpiraEm || 0);
+
+
+      // A fila do passageiro precisa ter direcionado esta oferta
+      // especificamente para este motorista.
+      if (d.motoristaAlvoAtual !== meuMotoristaId) return;
+
+      // Nunca considerar a própria corrida que está sendo finalizada.
+      if (docSnap.id === state.corridaAtualId) return;
+
+      if (expira > 0 && expira < Date.now()) {
+        console.warn(
+          '[motorista][proxima-listener] CANDIDATO_EXPIRADO',
+          docSnap.id
+        );
+        return;
+      }
+
+      candidata = {
+        id: docSnap.id,
+        ...d,
+        ofertaProximaCorrida: true,
+      };
+    });
+
+    if (!candidata) return;
+
+    /*
+     * IMPORTANTE:
+     * não usa o fluxo normal de notificação, porque ele sobrescreve
+     * state.corridaAtual. A oferta futura permanece exclusivamente no
+     * slot state.proximaCorrida.
+     */
+    state.proximaCorridaId = candidata.id;
+    state.proximaCorrida = candidata;
+
+    mostrarCardProximaCorrida(candidata, false);
+
+    console.log(
+      '[motorista] oferta de próxima corrida recebida sem alterar corrida atual:',
+      candidata.id
+    );
+
+    showToast('🔔 Próxima corrida disponível para reserva', 3500);
+
+    // Para esta escuta assim que existe uma candidata em análise.
+    // A etapa seguinte implementará aceitar/recusar esta oferta.
+    pararEscutaProximaCorrida();
+
+  }, (erro) => {
+    console.error(
+      '[motorista] erro na escuta da próxima corrida:',
+      erro
+    );
+  });
+}
+
+
+async function aceitarProximaCorrida() {
+  if (!firebaseReady || !db || !meuMotoristaId) {
+    showToast('⚠️ Serviço indisponível no momento');
+    return false;
+  }
+
+  const proximaId = state.proximaCorridaId;
+  const oferta = state.proximaCorrida;
+
+  if (!proximaId || !oferta) {
+    showToast('⚠️ A oferta da próxima corrida não está mais disponível');
+    return false;
+  }
+
+  // A reserva só pode acontecer enquanto a corrida atual ainda existe
+  // e o motorista já chegou ao destino dela.
+  if (!state.corridaAtualId || !chegouAoCliente) {
+    limparProximaCorridaLocal();
+    iniciarEscutaProximaCorrida();
+    return false;
+  }
+
+  try {
+    const conseguiu = await fb.runTransaction(db, async (tx) => {
+      const ref = fb.doc(db, 'corridas', proximaId);
+      const snap = await tx.get(ref);
+
+      if (!snap.exists()) return false;
+
+      const data = snap.data();
+
+      if (!data || data.status !== 'aguardando') return false;
+
+      // Revalidação obrigatória dentro da transação.
+      if (data.motoristaAlvoAtual !== meuMotoristaId) return false;
+
+      const expira = Number(data.ofertaExpiraEm || 0);
+      if (expira > 0 && expira < Date.now()) return false;
+
+      tx.update(ref, {
+        status: 'reservada',
+        motoristaId: meuMotoristaId,
+        motoristaNome: state.motorista.nome,
+        motoristaVeiculo: state.motorista.veiculo,
+        motoristaPlaca: state.motorista.placa,
+        motoristaAvaliacao: state.motorista.avaliacao,
+        motoristaSelfie: state.motorista.selfie || null,
+
+        // Posição inicial da reserva.
+        // Permite ao passageiro calcular o ETA enquanto o motorista
+        // ainda finaliza a corrida anterior.
+        motoristaLat: Number.isFinite(Number(state.motoristaLat))
+          ? Number(state.motoristaLat)
+          : null,
+        motoristaLon: Number.isFinite(Number(state.motoristaLon))
+          ? Number(state.motoristaLon)
+          : null,
+        motoristaAtualizadoEm: Date.now(),
+
+        // Vínculo explícito entre a corrida atual e a próxima.
+        corridaAnteriorId: state.corridaAtualId,
+        motoristaFinalizando: true,
+        reservadaEm: fb.serverTimestamp(),
+      });
+
+      return true;
+    });
+
+    if (!conseguiu) {
+      limparProximaCorridaLocal();
+
+      showToast('⚠️ Essa oferta não está mais disponível');
+
+      // Enquanto continuar elegível, volta a procurar outra oferta.
+      if (state.online && state.corridaAtualId && chegouAoCliente) {
+        iniciarEscutaProximaCorrida();
+      }
+
+      return false;
+    }
+
+    // Agora sim o slot deixa de representar mera oferta e passa
+    // a representar uma próxima corrida efetivamente reservada.
+    state.proximaCorrida = {
+      ...oferta,
+      id: proximaId,
+      status: 'reservada',
+      motoristaId: meuMotoristaId,
+      corridaAnteriorId: state.corridaAtualId,
+      motoristaFinalizando: true,
+    };
+
+    salvarProximaCorridaLocal(state.proximaCorrida);
+    mostrarCardProximaCorrida(state.proximaCorrida, true);
+
+    // Um motorista com próxima corrida reservada não pode continuar
+    // anunciado para receber uma terceira corrida.
+    removerPreDisponibilidadeProximaCorrida();
+    pararEscutaProximaCorrida();
+
+    console.log(
+      '[motorista] próxima corrida reservada:',
+      proximaId,
+      'após:',
+      state.corridaAtualId
+    );
+
+    showToast('✅ Próxima corrida reservada', 3500);
+
+    return true;
+
+  } catch (e) {
+    console.error(
+      '[motorista] erro ao reservar próxima corrida:',
+      e
+    );
+
+    showToast('⚠️ Não foi possível reservar a próxima corrida');
+    return false;
+  }
+}
+
+
+document.getElementById('btn-aceitar-proxima-corrida')
+  ?.addEventListener('click', async () => {
+    const btn = document.getElementById('btn-aceitar-proxima-corrida');
+    const btnRecusar = document.getElementById('btn-recusar-proxima-corrida');
+
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = 'Reservando...';
+    }
+
+    if (btnRecusar) btnRecusar.disabled = true;
+
+    const ok = await aceitarProximaCorrida();
+
+    if (!ok && state.proximaCorridaId) {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = '✓ Reservar próxima';
+      }
+
+      if (btnRecusar) btnRecusar.disabled = false;
+    }
+  });
+
+document.getElementById('btn-recusar-proxima-corrida')
+  ?.addEventListener('click', () => {
+    recusarProximaCorrida();
+  });
+
+function recusarProximaCorrida() {
+  if (!state.proximaCorridaId) return;
+
+  const recusadaId = state.proximaCorridaId;
+
+  // A corrida permanece aguardando para o watchdog do passageiro
+  // avançar normalmente para outro motorista.
+  limparProximaCorridaLocal();
+  esconderCardProximaCorrida();
+
+  console.log(
+    '[motorista] oferta de próxima corrida recusada:',
+    recusadaId
+  );
+
+  showToast('Próxima corrida recusada');
+
+  if (state.online && state.corridaAtualId && chegouAoCliente) {
+    iniciarEscutaProximaCorrida();
+  }
+}
+
+
+async function promoverProximaCorridaReservada(corridaAnteriorId) {
+  const proximaId = state.proximaCorridaId;
+
+  if (!proximaId || !firebaseReady || !db || !meuMotoristaId) {
+    return null;
+  }
+
+  try {
+    const promovida = await fb.runTransaction(db, async (tx) => {
+      const ref = fb.doc(db, 'corridas', proximaId);
+      const snap = await tx.get(ref);
+
+      if (!snap.exists()) return null;
+
+      const data = snap.data();
+      if (!data) return null;
+
+      // A promoção só pode ocorrer sobre a reserva já pertencente
+      // a este motorista.
+      if (data.status !== 'reservada') return null;
+      if (data.motoristaId !== meuMotoristaId) return null;
+
+      // Garante que esta reserva pertence justamente à corrida
+      // que acabou de ser finalizada.
+      if (
+        corridaAnteriorId &&
+        data.corridaAnteriorId &&
+        data.corridaAnteriorId !== corridaAnteriorId
+      ) {
+        return null;
+      }
+
+      tx.update(ref, {
+        status: 'aceita',
+        motoristaFinalizando: false,
+        promovidaEm: fb.serverTimestamp(),
+      });
+
+      return {
+        id: proximaId,
+        ...data,
+        status: 'aceita',
+        motoristaFinalizando: false,
+      };
+    });
+
+    if (!promovida) {
+      console.warn(
+        '[motorista] próxima corrida não pôde ser promovida:',
+        proximaId
+      );
+      return null;
+    }
+
+    // Somente DEPOIS da confirmação no Firestore a próxima corrida
+    // assume o slot principal.
+    state.corridaAtualId = promovida.id;
+    state.corridaAtual = promovida;
+    state.emCorridaAtiva = true;
+
+    try {
+      localStorage.setItem(
+        'interliga_mot_corrida_ativa',
+        JSON.stringify({
+          corridaId: promovida.id,
+          origem: promovida.origem || null,
+          destino: promovida.destino || null,
+          passageiroId: promovida.passageiroId || null,
+          passageiroNome: promovida.passageiroNome || null,
+          passageiroSelfie: promovida.passageiroSelfie || null,
+          preco: promovida.preco ?? null,
+          aceitoEm: Date.now(),
+        })
+      );
+    } catch (e) {
+      console.warn(
+        '[motorista] não foi possível persistir corrida promovida:',
+        e
+      );
+    }
+
+    // A reserva já virou a corrida principal.
+    limparProximaCorridaLocal();
+    pararEscutaProximaCorrida();
+    removerPreDisponibilidadeProximaCorrida();
+
+    console.log(
+      '[motorista] próxima corrida promovida para ativa:',
+      promovida.id
+    );
+
+    return promovida;
+
+  } catch (e) {
+    console.error(
+      '[motorista] erro ao promover próxima corrida:',
+      e
+    );
+    return null;
+  }
+}
+
+function limparProximaCorridaLocal() {
+  state.proximaCorridaId = null;
+  state.proximaCorrida = null;
+  esconderCardProximaCorrida();
+
+  try {
+    localStorage.removeItem(CHAVE_PROXIMA_CORRIDA);
+  } catch (e) {}
+}
+
+function restaurarProximaCorridaLocal() {
+  try {
+    const raw = localStorage.getItem(CHAVE_PROXIMA_CORRIDA);
+    if (!raw) return null;
+
+    const dados = JSON.parse(raw);
+    if (!dados?.corridaId) {
+      limparProximaCorridaLocal();
+      return null;
+    }
+
+    state.proximaCorridaId = dados.corridaId;
+    state.proximaCorrida = {
+      id: dados.corridaId,
+      origem: dados.origem || null,
+      destino: dados.destino || null,
+      passageiroId: dados.passageiroId || null,
+      passageiroNome: dados.passageiroNome || null,
+      passageiroSelfie: dados.passageiroSelfie || null,
+      preco: dados.preco ?? null,
+      reservada: true,
+    };
+
+    setTimeout(() => {
+      mostrarCardProximaCorrida(state.proximaCorrida, true);
+    }, 0);
+
+    return state.proximaCorrida;
+  } catch (e) {
+    console.warn('[motorista] próxima corrida local inválida:', e);
+    limparProximaCorridaLocal();
+    return null;
+  }
+}
 
 // ─────────────────────────────────────
 // TOAST
@@ -436,6 +1026,8 @@ function encerrarOperacaoMotorista() {
 
   try { pararEscutaCorridas(); } catch (e) {}
   try { pararDisponibilidade(); } catch (e) {}
+  try { removerPreDisponibilidadeProximaCorrida(); } catch (e) {}
+  try { pararEscutaProximaCorrida(); } catch (e) {}
   try { pararEscutaOferta(); } catch (e) {}
   try { clearInterval(state.countdownInterval); } catch (e) {}
   try { clearInterval(state.somRepeticaoInterval); } catch (e) {}
@@ -551,6 +1143,163 @@ function pararDisponibilidade() {
   if (firebaseReady && db) {
     fb.deleteDoc(fb.doc(db, 'motoristas_disponiveis', meuMotoristaId)).catch(() => {});
   }
+}
+
+
+// ─────────────────────────────────────
+// PRÉ-DISPONIBILIDADE PARA PRÓXIMA CORRIDA
+// O motorista continua na corrida atual.
+// Apenas informa que já chegou ao destino e pode ser considerado
+// para UMA próxima corrida.
+// ─────────────────────────────────────
+
+let intervalPreDisponibilidadeProximaCorrida = null;
+
+function pararHeartbeatPreDisponibilidadeProximaCorrida() {
+  if (intervalPreDisponibilidadeProximaCorrida) {
+    clearInterval(intervalPreDisponibilidadeProximaCorrida);
+    intervalPreDisponibilidadeProximaCorrida = null;
+  }
+}
+
+function iniciarHeartbeatPreDisponibilidadeProximaCorrida() {
+  pararHeartbeatPreDisponibilidadeProximaCorrida();
+
+  intervalPreDisponibilidadeProximaCorrida = setInterval(() => {
+    if (
+      !firebaseReady ||
+      !db ||
+      !meuMotoristaId ||
+      !state.corridaAtualId ||
+      !chegouAoCliente ||
+      (
+        state.proximaCorridaId &&
+        state.proximaCorrida?.status === 'reservada'
+      ) ||
+      obterAvaliacaoPendenteMotorista()
+    ) {
+      pararHeartbeatPreDisponibilidadeProximaCorrida();
+      return;
+    }
+
+    fb.setDoc(
+      fb.doc(db, 'motoristas_proxima_corrida', meuMotoristaId),
+      {
+        atualizadoEm: fb.serverTimestamp(),
+      },
+      { merge: true }
+    ).catch((e) => {
+      console.warn(
+        '[motorista][proxima] erro no heartbeat da pré-disponibilidade:',
+        e
+      );
+    });
+  }, 45000);
+}
+
+function publicarPreDisponibilidadeProximaCorrida() {
+
+  // Contrato atual do piloto:
+  // 1 corrida ativa + no máximo 1 próxima reservada.
+  //
+  // Se há uma avaliação pendente, esta corrida já veio de uma
+  // reserva anterior. Não publicamos nova pré-disponibilidade,
+  // evitando o encadeamento A -> B -> C e impedindo sobrescrever
+  // a avaliação pendente da corrida A.
+  if (obterAvaliacaoPendenteMotorista()) {
+    console.log(
+      '[motorista] pré-disponibilidade bloqueada: existe avaliação pendente'
+    );
+
+    removerPreDisponibilidadeProximaCorrida();
+    pararEscutaProximaCorrida();
+
+    return false;
+  }
+
+  console.log('[motorista][proxima] tentativa de publicar', {
+    firebaseReady,
+    temDb: !!db,
+    meuMotoristaId,
+    corridaAtualId: state.corridaAtualId,
+    chegouAoCliente,
+    proximaCorridaId: state.proximaCorridaId || null,
+    motoristaLat: state.motoristaLat,
+    motoristaLon: state.motoristaLon,
+    destinoLat: state.corridaAtual?.destinoLat,
+    destinoLon: state.corridaAtual?.destinoLon
+  });
+
+  if (!firebaseReady || !db || !meuMotoristaId) {
+    console.warn('[motorista][proxima] BLOQUEADA_FIREBASE_OU_UID');
+    return;
+  }
+
+  if (!state.corridaAtualId || !chegouAoCliente) {
+    console.warn('[motorista][proxima] BLOQUEADA_ESTADO_CORRIDA');
+    return;
+  }
+
+  if (state.proximaCorridaId) {
+    console.warn('[motorista][proxima] BLOQUEADA_PROXIMA_JA_EXISTE');
+    return;
+  }
+
+  let lat = Number(state.motoristaLat);
+  let lon = Number(state.motoristaLon);
+
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+    const destinoLat = Number(state.corridaAtual?.destinoLat);
+    const destinoLon = Number(state.corridaAtual?.destinoLon);
+
+    if (Number.isFinite(destinoLat) && Number.isFinite(destinoLon)) {
+      lat = destinoLat;
+      lon = destinoLon;
+      console.log('[motorista][proxima] usando coordenadas do destino');
+    }
+  }
+
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+    console.warn('[motorista][proxima] BLOQUEADA_SEM_COORDENADAS', {
+      lat,
+      lon
+    });
+    return;
+  }
+
+  console.log('[motorista][proxima] GRAVANDO_FIRESTORE', {
+    lat,
+    lon,
+    corridaAtualId: state.corridaAtualId
+  });
+
+  fb.setDoc(fb.doc(db, 'motoristas_proxima_corrida', meuMotoristaId), {
+    nome: state.motorista.nome,
+    avaliacao: state.motorista.avaliacao,
+    cidade: state.motorista.cidade || 'madre',
+    categoria: state.motorista.categoria || 'x',
+    categorias: state.motorista.categorias || [state.motorista.categoria || 'x'],
+    lat,
+    lon,
+    corridaAtualId: state.corridaAtualId,
+    estado: 'finalizando',
+    atualizadoEm: fb.serverTimestamp(),
+  }).then(() => {
+    iniciarHeartbeatPreDisponibilidadeProximaCorrida();
+    iniciarEscutaProximaCorrida();
+  }).catch((e) =>
+    console.warn('[motorista] erro ao publicar pré-disponibilidade:', e)
+  );
+}
+
+function removerPreDisponibilidadeProximaCorrida() {
+  pararHeartbeatPreDisponibilidadeProximaCorrida();
+
+  if (!firebaseReady || !db || !meuMotoristaId) return;
+
+  fb.deleteDoc(
+    fb.doc(db, 'motoristas_proxima_corrida', meuMotoristaId)
+  ).catch(() => {});
 }
 
 // ─────────────────────────────────────
@@ -788,6 +1537,42 @@ function iniciarEscutaCorridas() {
             const souAlvo = !corrida.motoristaAlvoAtual || corrida.motoristaAlvoAtual === meuMotoristaId;
             if (!souAlvo) return;
 
+            /*
+             * A -> B:
+             * se este motorista já está finalizando uma corrida atual,
+             * uma nova oferta direcionada a ele pertence exclusivamente
+             * ao slot de próxima corrida.
+             *
+             * O listener normal NÃO pode chamar notificarNovaCorrida(),
+             * pois esse fluxo usa state.corridaAtual e abriria a tela
+             * "Nova corrida", sobrescrevendo visualmente a corrida A.
+             */
+            const corridaAtualFinalizando =
+              !!state.corridaAtualId
+              && !!state.corridaAtual
+              && state.corridaAtual.status === 'em_andamento'
+              && state.corridaAtual.motoristaChegouDestino === true;
+
+            if (
+              corridaAtualFinalizando
+              && corrida.id !== state.corridaAtualId
+              && corrida.motoristaAlvoAtual === meuMotoristaId
+            ) {
+              console.log(
+                '[motorista] oferta reservada ao listener de próxima corrida:',
+                corrida.id,
+                {
+                  corridaAtualId: state.corridaAtualId,
+                  statusAtual: state.corridaAtual?.status,
+                  chegouDestino:
+                    state.corridaAtual?.motoristaChegouDestino === true
+                }
+              );
+
+              iniciarEscutaProximaCorrida();
+              return;
+            }
+
             // Evita notificar de novo pela mesma "rodada" da fila (mas notifica de novo se a fila avançou,
             // mesmo que tenha voltado pro mesmo motorista — por isso usa ofertaExpiraEm, que sempre muda).
             // Usa um Set (não uma variável única) pra nunca esquecer o que já foi
@@ -914,6 +1699,49 @@ function notificarNovaCorrida(corrida) {
 
   if (corrida.motoristaAlvoAtual && corrida.motoristaAlvoAtual !== meuMotoristaId) {
     console.log('[motorista] oferta ignorada — destinada a outro motorista:', corrida.id);
+    return;
+  }
+
+  /*
+   * BARREIRA FINAL A -> B
+   *
+   * Uma oferta aguardando nunca pode substituir state.corridaAtual
+   * quando já existe outra corrida aceita/em andamento.
+   *
+   * Para motorista finalizando A, a oferta direcionada B pertence
+   * exclusivamente ao fluxo state.proximaCorrida.
+   *
+   * Esta barreira também protege contra outras entradas da oferta,
+   * como reinício de listener ou FCM.
+   */
+  const existeCorridaPrincipalAtiva =
+    !!state.corridaAtualId
+    && !!state.corridaAtual
+    && state.corridaAtualId !== corrida.id
+    && ['aceita', 'em_andamento'].includes(state.corridaAtual.status);
+
+  if (existeCorridaPrincipalAtiva) {
+    const podeSerProxima =
+      state.corridaAtual.status === 'em_andamento'
+      && state.corridaAtual.motoristaChegouDestino === true
+      && corrida.motoristaAlvoAtual === meuMotoristaId;
+
+    console.log(
+      '[motorista] oferta impedida de sobrescrever corrida ativa:',
+      corrida.id,
+      {
+        corridaAtualId: state.corridaAtualId,
+        statusAtual: state.corridaAtual.status,
+        chegouDestino:
+          state.corridaAtual.motoristaChegouDestino === true,
+        podeSerProxima
+      }
+    );
+
+    if (podeSerProxima) {
+      iniciarEscutaProximaCorrida();
+    }
+
     return;
   }
 
@@ -1362,6 +2190,14 @@ async function aceitarCorrida() {
         const snap = await tx.get(ref);
         const data = snap.data();
         if (!data || data.status !== 'aguardando') return false; // outro motorista já pegou, ou foi cancelada
+
+        // Revalida dentro da própria transação que a oferta ainda pertence
+        // a este motorista. O watchdog do passageiro pode trocar o alvo
+        // enquanto a tela da oferta ainda está aberta.
+        if (data.motoristaAlvoAtual && data.motoristaAlvoAtual !== meuMotoristaId) {
+          return false;
+        }
+
         tx.update(ref, {
           status: 'aceita',
           motoristaId: meuMotoristaId,
@@ -1531,9 +2367,23 @@ function onEnterOngoing() {
   if (btnFinalizar) btnFinalizar.hidden = true;
   if (btnSeguir) btnSeguir.hidden = true;
 
-  // Ao restaurar uma corrida já iniciada, o próximo "Cheguei"
-  // passa a representar chegada à próxima parada/destino.
-  chegouAoCliente = viagemJaIniciada;
+  // A chegada ao destino final precisa vir do estado persistido.
+  // Uma corrida apenas "em_andamento" ainda pode estar no meio da viagem.
+  chegouAoCliente =
+    viagemJaIniciada &&
+    corrida.motoristaChegouDestino === true;
+
+  if (chegouAoCliente) {
+    if (btnCheguei) btnCheguei.hidden = true;
+    if (btnFinalizar) btnFinalizar.hidden = false;
+
+    const badge = document.getElementById('ongoing-eta-badge');
+    if (badge) badge.textContent = '🟢 Você chegou!';
+
+    // Se a página foi restaurada depois da chegada final,
+    // recompõe também a pré-disponibilidade A -> B.
+    publicarPreDisponibilidadeProximaCorrida();
+  }
 
   try { initMapOngoing(corrida); } catch (e) { console.error('[motorista] erro ao iniciar mapa ongoing:', e); }
   try { iniciarChatMotorista(); } catch (e) { console.error('[motorista] erro ao iniciar chat:', e); }
@@ -1834,10 +2684,37 @@ document.getElementById('btn-cheguei')?.addEventListener('click', async () => {
       true
     );
   } else {
+    // Chegada ao destino final precisa sobreviver a reload/reconexão.
+    if (firebaseReady && db && state.corridaAtualId &&
+        !String(state.corridaAtualId).startsWith('local-')) {
+      try {
+        await fb.updateDoc(fb.doc(db, 'corridas', state.corridaAtualId), {
+          motoristaChegouDestino: true,
+          motoristaChegouDestinoEm: fb.serverTimestamp(),
+        });
+
+        if (state.corridaAtual) {
+          state.corridaAtual.motoristaChegouDestino = true;
+        }
+      } catch (e) {
+        console.error(
+          '[motorista] erro ao registrar chegada ao destino:',
+          e
+        );
+        showToast(
+          '⚠️ Não foi possível registrar a chegada. Tente novamente.'
+        );
+        return;
+      }
+    }
+
     chegouAoCliente = true;
+    publicarPreDisponibilidadeProximaCorrida();
+
     document.getElementById('btn-cheguei').hidden = true;
     document.getElementById('btn-finalizar-corrida').hidden = false;
-    document.getElementById('ongoing-eta-badge').textContent = '🟢 Você chegou!';
+    document.getElementById('ongoing-eta-badge').textContent =
+      '🟢 Você chegou!';
 
     showToast('📍 Chegada ao destino registrada');
   }
@@ -1982,6 +2859,10 @@ async function finalizarCorrida() {
   }
   localStorage.removeItem('interliga_mot_corrida_ativa'); // limpa corrida ativa
 
+  // A corrida terminou: não pode permanecer anunciado como
+  // motorista "finalizando" para uma próxima corrida.
+  removerPreDisponibilidadeProximaCorrida();
+
   // Débito automático se o passageiro escolheu pagar pela Carteira do app
   if (corrida.formaPagamento === 'carteira' && corrida.passageiroId) {
     lancarCarteira(corrida.passageiroId, -Number(corrida.preco || 0), 'Pagamento de corrida', corrida.id);
@@ -1998,6 +2879,16 @@ async function finalizarCorrida() {
   // Cashback da corrida (só Interliga X, se o programa estiver ativo)
   processarCashback(corrida);
 
+  const corridaFinalizadaId = state.corridaAtualId;
+  const haviaProximaReservada = Boolean(
+    state.proximaCorridaId &&
+    state.proximaCorrida &&
+    (
+      state.proximaCorrida.status === 'reservada' ||
+      state.proximaCorrida.reservada === true
+    )
+  );
+
   state.corridaAtual = null;
   state.corridaAtualId = null;
   state.emCorridaAtiva = false;
@@ -2010,9 +2901,148 @@ async function finalizarCorrida() {
   indiceRotaAtualMotorista = 0;
 
   showToast('✅ Corrida finalizada! +R$ ' + Number(corrida.precoOriginal || corrida.preco || 18).toFixed(2).replace('.', ','));
-  if (state.online) { iniciarDisponibilidade(); iniciarEscutaCorridas(); } // volta a ficar disponível e escutar novas ofertas
-  abrirTelaAvaliarPassageiro(corrida.passageiroId, corrida.passageiroNome, corrida.id);
+
+  let corridaPromovida = null;
+
+  if (haviaProximaReservada) {
+    corridaPromovida = await promoverProximaCorridaReservada(
+      corridaFinalizadaId
+    );
+  }
+
+  if (corridaPromovida) {
+    // A corrida seguinte tem prioridade operacional, mas a avaliação
+    // desta corrida não pode ser perdida.
+    salvarAvaliacaoPendenteMotorista(corrida);
+
+    /*
+     * Existe uma próxima corrida já reservada.
+     * NÃO volta para motoristas_disponiveis e NÃO reinicia a escuta
+     * normal, evitando receber uma terceira corrida.
+     *
+     * A avaliação da corrida anterior continua disponível depois,
+     * mas a prioridade operacional agora é seguir até o passageiro
+     * que já estava aguardando.
+     */
+    showToast('🚗 Próxima corrida iniciada. Siga até o passageiro.', 3500);
+
+    go('screen-ongoing');
+    onEnterOngoing();
+
+  } else {
+    // Sem próxima reserva: mantém exatamente o comportamento validado.
+    if (state.online) {
+      iniciarDisponibilidade();
+      iniciarEscutaCorridas();
+    }
+
+    const avaliacaoPendente =
+      obterAvaliacaoPendenteMotorista();
+
+    if (
+      avaliacaoPendente &&
+      avaliacaoPendente.corridaId !== corrida.id
+    ) {
+      abrirTelaAvaliarPassageiro(
+        avaliacaoPendente.passageiroId,
+        avaliacaoPendente.passageiroNome,
+        avaliacaoPendente.corridaId
+      );
+    } else {
+      abrirTelaAvaliarPassageiro(
+        corrida.passageiroId,
+        corrida.passageiroNome,
+        corrida.id
+      );
+    }
+  }
+
   atualizarStatsHome();
+}
+
+
+const CHAVE_AVALIACAO_PENDENTE_MOTORISTA =
+  'interliga_mot_avaliacao_pendente';
+
+function salvarAvaliacaoPendenteMotorista(corrida) {
+  if (!corrida?.id || !corrida?.passageiroId) return false;
+
+  const dados = {
+    corridaId: corrida.id,
+    passageiroId: corrida.passageiroId,
+    passageiroNome: corrida.passageiroNome || 'Passageiro',
+    salvaEm: Date.now(),
+  };
+
+  try {
+    localStorage.setItem(
+      CHAVE_AVALIACAO_PENDENTE_MOTORISTA,
+      JSON.stringify(dados)
+    );
+
+    console.log(
+      '[motorista] avaliação pendente preservada:',
+      dados.corridaId
+    );
+
+    return true;
+
+  } catch (e) {
+    console.warn(
+      '[motorista] não foi possível preservar avaliação pendente:',
+      e
+    );
+
+    return false;
+  }
+}
+
+function obterAvaliacaoPendenteMotorista() {
+  try {
+    const raw = localStorage.getItem(
+      CHAVE_AVALIACAO_PENDENTE_MOTORISTA
+    );
+
+    if (!raw) return null;
+
+    const dados = JSON.parse(raw);
+
+    if (!dados?.corridaId || !dados?.passageiroId) {
+      localStorage.removeItem(
+        CHAVE_AVALIACAO_PENDENTE_MOTORISTA
+      );
+      return null;
+    }
+
+    return dados;
+
+  } catch (e) {
+    console.warn(
+      '[motorista] avaliação pendente inválida:',
+      e
+    );
+
+    return null;
+  }
+}
+
+function limparAvaliacaoPendenteMotorista(corridaId = null) {
+  try {
+    const atual = obterAvaliacaoPendenteMotorista();
+
+    if (
+      corridaId &&
+      atual?.corridaId &&
+      atual.corridaId !== corridaId
+    ) {
+      return;
+    }
+
+    localStorage.removeItem(
+      CHAVE_AVALIACAO_PENDENTE_MOTORISTA
+    );
+
+  } catch (e) {}
 }
 
 // ─────────────────────────────────────
@@ -2064,6 +3094,10 @@ document.getElementById('btn-enviar-avaliacao-passageiro')?.addEventListener('cl
 
     btn.textContent = '✓ Avaliação enviada';
     showToast('✅ Avaliação enviada!');
+
+    limparAvaliacaoPendenteMotorista(
+      avaliarCorridaIdMotorista
+    );
 
     await new Promise(resolve => setTimeout(resolve, 1200));
     go('screen-home');
@@ -2826,6 +3860,23 @@ async function aplicarStatusCadastroMotorista(dados) {
             state.corridaAtualId = dadosCorrida.corridaId;
             state.corridaAtual = { id: dadosCorrida.corridaId, ...snapCorrida.data() };
             state.emCorridaAtiva = true;
+
+            /*
+             * RESTAURACAO DE CORRIDA ATIVA
+             *
+             * aplicarStatusCadastroMotorista() pode ter restaurado o estado
+             * Online antes de descobrir que esta corrida ainda estava ativa.
+             * Nesse caso o heartbeat de motoristas_disponiveis já pode ter
+             * iniciado. A corrida ativa precisa ter prioridade absoluta.
+             */
+            pararDisponibilidade();
+            pararEscutaCorridas();
+
+            console.log(
+              '[motorista] disponibilidade normal removida ao restaurar corrida ativa:',
+              state.corridaAtualId
+            );
+
             showToast('🔄 Corrida em andamento retomada!');
             go('screen-ongoing');
             onEnterOngoing();
@@ -2841,6 +3892,110 @@ async function aplicarStatusCadastroMotorista(dados) {
         localStorage.removeItem('interliga_mot_corrida_ativa');
       }
     }
+    // Fallback servidor:
+    // se o localStorage sumiu, não abandona uma corrida que continua
+    // ativa no Firestore e pertence ao motorista autenticado.
+    try {
+      const snapAtivas = await fb.getDocs(
+        fb.query(
+          fb.collection(db, 'corridas'),
+          fb.where('motoristaId', '==', meuMotoristaId)
+        )
+      );
+
+      const corridasAtivasServidor = [];
+
+      snapAtivas.forEach((docSnap) => {
+        const corridaServidor = docSnap.data();
+
+        if (
+          corridaServidor &&
+          ['aceita', 'em_andamento'].includes(corridaServidor.status)
+        ) {
+          corridasAtivasServidor.push({
+            id: docSnap.id,
+            ...corridaServidor,
+          });
+        }
+      });
+
+      if (corridasAtivasServidor.length === 1) {
+        const corridaServidor = corridasAtivasServidor[0];
+
+        console.log(
+          '[motorista] corrida ativa recuperada do Firestore:',
+          corridaServidor.id,
+          corridaServidor.status
+        );
+
+        state.corridaAtualId = corridaServidor.id;
+        state.corridaAtual = corridaServidor;
+        state.emCorridaAtiva = true;
+
+        /*
+         * Mesmo contrato da restauracao por localStorage:
+         * corrida ativa nunca pode coexistir com disponibilidade normal.
+         */
+        pararDisponibilidade();
+        pararEscutaCorridas();
+
+        console.log(
+          '[motorista] disponibilidade normal removida ao recuperar corrida do Firestore:',
+          state.corridaAtualId
+        );
+
+        try {
+          localStorage.setItem(
+            'interliga_mot_corrida_ativa',
+            JSON.stringify({
+              corridaId: corridaServidor.id,
+              origem: corridaServidor.origem || null,
+              destino: corridaServidor.destino || null,
+              passageiroId: corridaServidor.passageiroId || null,
+              passageiroNome: corridaServidor.passageiroNome || null,
+              passageiroSelfie:
+                corridaServidor.passageiroSelfie || null,
+              preco: corridaServidor.preco ?? null,
+              aceitoEm: Date.now(),
+            })
+          );
+        } catch (e) {
+          console.warn(
+            '[motorista] não foi possível recompor corrida no localStorage:',
+            e
+          );
+        }
+
+        showToast('🔄 Corrida em andamento recuperada do servidor!');
+        go('screen-ongoing');
+        return;
+      }
+
+      if (corridasAtivasServidor.length > 1) {
+        console.error(
+          '[motorista] inconsistência: mais de uma corrida ativa:',
+          corridasAtivasServidor.map((c) => ({
+            id: c.id,
+            status: c.status,
+          }))
+        );
+
+        showToast(
+          '⚠️ Encontramos mais de uma corrida ativa. Verifique a operação.'
+        );
+        return;
+      }
+
+      console.log(
+        '[motorista] nenhuma corrida ativa encontrada no Firestore'
+      );
+    } catch (e) {
+      console.warn(
+        '[motorista] erro no fallback de corrida ativa:',
+        e
+      );
+    }
+
     go('screen-home');
     configurarNotificacoesPush();
   } else if (dados.verificacao === 'rejeitado') {
@@ -3019,141 +4174,317 @@ history.pushState(null, '', '');
 let entregasListenerUnsub = null;
 let entregaAtualId = null;
 let entregaAtualDados = null;
+let entregaAtualRef = null;
+let entregaFranquiaId = null;
+let entregasLojasUnsubs = [];
 
-function iniciarListenerEntregas() {
-  if (!firebaseReady || !db) return;
+function limparListenersEntregasLojas() {
+  entregasLojasUnsubs.forEach(unsub => {
+    try { unsub(); } catch (_) {}
+  });
+  entregasLojasUnsubs = [];
+}
+
+function renderizarEntregasDisponiveis(pedidos) {
+  const badge = document.getElementById('badge-entregas');
+  const lista = document.getElementById('lista-pedidos-entrega');
+  if (!lista) return;
+
+  if (entregaAtualId) return;
+
+  if (badge) {
+    badge.textContent = pedidos.length;
+    badge.style.display = pedidos.length > 0 ? 'flex' : 'none';
+  }
+
+  if (pedidos.length === 0) {
+    lista.innerHTML = `
+      <div style="text-align:center;color:#9098A8;padding:30px;">
+        <div style="font-size:32px;margin-bottom:8px;">🛵</div>
+        <div style="font-weight:600;">Nenhuma entrega disponível</div>
+        <div style="font-size:13px;margin-top:4px;">Pedidos aparecem aqui quando o restaurante marcar como pronto</div>
+      </div>`;
+    return;
+  }
+
+  lista.innerHTML = pedidos.map(p => {
+    const itens = (p.itens || []).map(i =>
+      `${i.qtd || i.quantidade || 1}x ${i.nome || 'Item'}`
+    ).join(', ');
+
+    return `
+      <div style="background:#1A1F2E;border-radius:14px;border:1px solid #2A3142;padding:16px;">
+        <div style="font-weight:700;font-size:15px;margin-bottom:6px;">🍔 ${p.restauranteNome || 'Estabelecimento'}</div>
+        <div style="font-size:13px;color:#9098A8;margin-bottom:4px;">Pedido: ${p.numero || p.id}</div>
+        <div style="font-size:13px;color:#9098A8;margin-bottom:4px;">Itens: ${itens || '—'}</div>
+        <div style="font-size:13px;color:#9098A8;margin-bottom:4px;">📍 Retirada: ${p.enderecoRestaurante || '—'}</div>
+        <div style="font-size:13px;color:#9098A8;margin-bottom:8px;">🏠 Entrega: ${p.endereco || '—'}</div>
+        <div style="font-size:15px;font-weight:700;color:#FF6B00;margin-bottom:12px;">Taxa: ${formatMoeda(p.taxaEntrega || 0)}</div>
+        <button class="btn-accept" onclick="aceitarEntrega('${p.lojaId}','${p.id}')">✅ Aceitar entrega</button>
+      </div>`;
+  }).join('');
+}
+
+async function iniciarListenerEntregas() {
+  if (!firebaseReady || !db || !meuMotoristaId) return;
   if (entregasListenerUnsub) return;
 
-  // Escuta pedidos com status 'aguardando_entregador' — prontos pra busca
-  const q = fb.query(
-    fb.collection(db, 'pedidos_food'),
-    fb.where('status', '==', 'aguardando_entregador'),
-    fb.where('tipoEntrega', '==', 'interliga')
-  );
+  try {
+    const perfilRef = fb.doc(db, 'usuariosEntregadores', meuMotoristaId);
+    const perfilSnap = await fb.getDoc(perfilRef);
 
-  entregasListenerUnsub = fb.onSnapshot(q, (snap) => {
-    const badge = document.getElementById('badge-entregas');
-    const lista = document.getElementById('lista-pedidos-entrega');
-    if (!lista) return;
-
-    // Não mostra se já está em outra entrega
-    if (entregaAtualId) return;
-
-    const pedidos = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-
-    // Atualiza badge
-    if (badge) {
-      badge.textContent = pedidos.length;
-      badge.style.display = pedidos.length > 0 ? 'flex' : 'none';
-    }
-
-    if (pedidos.length === 0) {
-      lista.innerHTML = `
-        <div style="text-align:center;color:#9098A8;padding:30px;">
-          <div style="font-size:32px;margin-bottom:8px;">🛵</div>
-          <div style="font-weight:600;">Nenhuma entrega disponível</div>
-          <div style="font-size:13px;margin-top:4px;">Quando um restaurante precisar de entregador, aparece aqui</div>
-        </div>`;
+    if (!perfilSnap.exists()) {
+      console.log('[Interfood] Motorista sem perfil de entregador.');
       return;
     }
 
-    lista.innerHTML = pedidos.map(p => {
-      const itens = (p.itens || []).map(i => `${i.qtd}x ${i.nome}`).join(', ');
-      return `
-        <div style="background:#1A1F2E;border-radius:14px;border:1px solid #2A3142;padding:16px;">
-          <div style="font-weight:700;font-size:15px;margin-bottom:6px;">🍔 ${p.restauranteNome || '—'}</div>
-          <div style="font-size:13px;color:#9098A8;margin-bottom:4px;">Itens: ${itens}</div>
-          <div style="font-size:13px;color:#9098A8;margin-bottom:8px;">📍 Entregar em: ${p.endereco || '—'}</div>
-          <div style="font-size:15px;font-weight:700;color:#FF6B00;margin-bottom:12px;">Taxa: ${formatMoeda(p.taxaEntrega || 0)}</div>
-          <button class="btn-accept" onclick="aceitarEntrega('${p.id}')">✅ Aceitar entrega</button>
-        </div>`;
-    }).join('');
-  });
-}
+    const perfil = perfilSnap.data() || {};
 
-async function aceitarEntrega(pedidoId) {
-  if (!firebaseReady || !db || !meuMotoristaId) return;
-  try {
-    await fb.updateDoc(fb.doc(db, 'pedidos_food', pedidoId), {
-      status: 'entrega',
-      entregadorId: meuMotoristaId,
-      entregadorNome: state.motorista?.nome || 'Entregador',
-      atualizadoEm: fb.serverTimestamp(),
+    if (
+      perfil.ativo !== true ||
+      perfil.perfil !== 'entregador' ||
+      !perfil.franquiaId
+    ) {
+      console.warn('[Interfood] Perfil de entregador inválido ou inativo.');
+      return;
+    }
+
+    entregaFranquiaId = perfil.franquiaId;
+
+    const lojasRef = fb.collection(
+      db,
+      'franquias',
+      entregaFranquiaId,
+      'estabelecimentos'
+    );
+
+    entregasListenerUnsub = fb.onSnapshot(lojasRef, lojasSnap => {
+      limparListenersEntregasLojas();
+
+      const cachePorLoja = new Map();
+
+      const atualizarTela = () => {
+        const todos = [];
+        cachePorLoja.forEach(lista => todos.push(...lista));
+        renderizarEntregasDisponiveis(todos);
+      };
+
+      lojasSnap.docs.forEach(lojaDoc => {
+        const loja = lojaDoc.data() || {};
+        const lojaId = lojaDoc.id;
+
+        const pedidosRef = fb.collection(
+          db,
+          'franquias',
+          entregaFranquiaId,
+          'estabelecimentos',
+          lojaId,
+          'pedidos'
+        );
+
+        const q = fb.query(
+          pedidosRef,
+          fb.where('status', '==', 'Pronto')
+        );
+
+        const unsub = fb.onSnapshot(q, pedidosSnap => {
+          const pedidos = pedidosSnap.docs
+            .map(docSnap => ({
+              id: docSnap.id,
+              lojaId,
+              restauranteNome: loja.nome || 'Estabelecimento',
+              enderecoRestaurante: loja.enderecoLoja || '',
+              restauranteLat: Number(loja.latitudeLoja),
+              restauranteLon: Number(loja.longitudeLoja),
+              ...docSnap.data()
+            }))
+            .filter(p =>
+              p.entrega === 'Interfood' &&
+              p.operadorEntrega === 'Intermobilidade'
+            );
+
+          cachePorLoja.set(lojaId, pedidos);
+          atualizarTela();
+        }, erro => {
+          console.error('[Interfood] Erro ao ouvir pedidos:', lojaId, erro);
+          cachePorLoja.set(lojaId, []);
+          atualizarTela();
+        });
+
+        entregasLojasUnsubs.push(unsub);
+      });
+
+      atualizarTela();
+    }, erro => {
+      console.error('[Interfood] Erro ao ouvir estabelecimentos:', erro);
     });
 
-    entregaAtualId = pedidoId;
-    // Busca os dados completos
-    const snap = await fb.getDoc(fb.doc(db, 'pedidos_food', pedidoId));
-    entregaAtualDados = snap.data();
+  } catch (e) {
+    console.error('[Interfood] Falha ao iniciar entregas:', e);
+  }
+}
 
-    // Mostra o card de entrega em andamento
+async function aceitarEntrega(lojaId, pedidoId) {
+  if (!firebaseReady || !db || !meuMotoristaId || !entregaFranquiaId) return;
+
+  try {
+    const pedidoRef = fb.doc(
+      db,
+      'franquias',
+      entregaFranquiaId,
+      'estabelecimentos',
+      lojaId,
+      'pedidos',
+      pedidoId
+    );
+
+    const lojaRef = fb.doc(
+      db,
+      'franquias',
+      entregaFranquiaId,
+      'estabelecimentos',
+      lojaId
+    );
+
+    await fb.runTransaction(db, async transaction => {
+      const pedidoSnap = await transaction.get(pedidoRef);
+
+      if (!pedidoSnap.exists()) {
+        throw new Error('Pedido não encontrado.');
+      }
+
+      const pedido = pedidoSnap.data() || {};
+
+      if (
+        pedido.status !== 'Pronto' ||
+        pedido.entrega !== 'Interfood' ||
+        pedido.operadorEntrega !== 'Intermobilidade'
+      ) {
+        throw new Error('Esta entrega não está mais disponível.');
+      }
+
+      transaction.update(pedidoRef, {
+        status: 'Entregador aceitou',
+        entregador: {
+          uid: meuMotoristaId,
+          nome: state.motorista?.nome || 'Entregador'
+        },
+        aceitoEm: fb.serverTimestamp()
+      });
+    });
+
+    const [pedidoSnap, lojaSnap] = await Promise.all([
+      fb.getDoc(pedidoRef),
+      fb.getDoc(lojaRef)
+    ]);
+
+    const pedido = pedidoSnap.data() || {};
+    const loja = lojaSnap.exists() ? (lojaSnap.data() || {}) : {};
+
+    entregaAtualId = pedidoId;
+    entregaAtualRef = pedidoRef;
+    entregaAtualDados = {
+      ...pedido,
+      lojaId,
+      restauranteNome: loja.nome || 'Estabelecimento',
+      enderecoRestaurante: loja.enderecoLoja || '',
+      restauranteLat: Number(loja.latitudeLoja),
+      restauranteLon: Number(loja.longitudeLoja)
+    };
+
     document.getElementById('entrega-em-andamento').hidden = false;
-    document.getElementById('entrega-restaurante-nome').textContent = entregaAtualDados.restauranteNome || '—';
-    document.getElementById('entrega-restaurante-end').textContent = entregaAtualDados.enderecoRestaurante || 'Ver no mapa';
-    document.getElementById('entrega-cliente-nome').textContent = entregaAtualDados.passageiroNome || '—';
-    document.getElementById('entrega-cliente-end').textContent = entregaAtualDados.endereco || '—';
+    document.getElementById('entrega-restaurante-nome').textContent =
+      entregaAtualDados.restauranteNome || '—';
+    document.getElementById('entrega-restaurante-end').textContent =
+      entregaAtualDados.enderecoRestaurante || 'Ver no mapa';
+    document.getElementById('entrega-cliente-nome').textContent =
+      entregaAtualDados.cliente || '—';
+    document.getElementById('entrega-cliente-end').textContent =
+      entregaAtualDados.endereco || '—';
 
     document.getElementById('lista-pedidos-entrega').innerHTML = '';
-    showToast('✅ Entrega aceita! Vá ao restaurante buscar o pedido.');
-  } catch(e) {
+
+    const btnColeta = document.getElementById('btn-entrega-coletei');
+    const btnEntregue = document.getElementById('btn-entrega-entregue');
+    const btnDevolver = document.getElementById('btn-entrega-devolver');
+
+    if (btnColeta) btnColeta.hidden = false;
+    if (btnEntregue) btnEntregue.hidden = true;
+    if (btnDevolver) btnDevolver.hidden = true;
+
+    showToast('✅ Entrega aceita! Vá ao estabelecimento buscar o pedido.');
+
+  } catch (e) {
     showToast('⚠️ Erro ao aceitar: ' + (e.message || e.code));
   }
 }
-// motorista.js é carregado como <script type="module">, então funções
-// declaradas aqui ficam no escopo do módulo — não em window. O botão dessa
-// tela é criado dinamicamente (innerHTML) com onclick="aceitarEntrega(...)",
-// que roda no escopo global, então precisa dessa exposição explícita pra
-// não dar "aceitarEntrega is not defined" ao clicar.
+
 window.aceitarEntrega = aceitarEntrega;
 
 document.getElementById('btn-entrega-coletei')?.addEventListener('click', async () => {
-  if (!entregaAtualId) return;
+  if (!entregaAtualRef) return;
+
   try {
-    await fb.updateDoc(fb.doc(db, 'pedidos_food', entregaAtualId), {
-      status: 'entrega_a_caminho',
-      atualizadoEm: fb.serverTimestamp(),
+    await fb.updateDoc(entregaAtualRef, {
+      status: 'Coletado',
+      coletadoEm: fb.serverTimestamp()
     });
+
+    await fb.updateDoc(entregaAtualRef, {
+      status: 'Saiu para entrega',
+      saiuEntregaEm: fb.serverTimestamp()
+    });
+
+    if (entregaAtualDados) {
+      entregaAtualDados.status = 'Saiu para entrega';
+    }
+
     document.getElementById('btn-entrega-coletei').hidden = true;
     document.getElementById('btn-entrega-entregue').hidden = false;
     document.getElementById('btn-entrega-devolver').hidden = false;
-    showToast('🛵 Ótimo! Agora entregue ao cliente.');
-  } catch(e) { showToast('⚠️ Erro: ' + e.message); }
+
+    showToast('🛵 Pedido coletado. Agora siga para o cliente.');
+
+  } catch (e) {
+    showToast('⚠️ Erro: ' + (e.message || e.code));
+  }
 });
 
 document.getElementById('btn-entrega-entregue')?.addEventListener('click', async () => {
-  if (!entregaAtualId) return;
+  if (!entregaAtualRef) return;
+
   try {
-    await fb.updateDoc(fb.doc(db, 'pedidos_food', entregaAtualId), {
-      status: 'entregue',
-      atualizadoEm: fb.serverTimestamp(),
+    await fb.updateDoc(entregaAtualRef, {
+      status: 'Concluído',
+      concluidoEm: fb.serverTimestamp()
     });
+
     showToast('🏠 Entrega concluída!');
     resetarEntregaAtual();
-  } catch(e) { showToast('⚠️ Erro: ' + e.message); }
+
+  } catch (e) {
+    showToast('⚠️ Erro: ' + (e.message || e.code));
+  }
 });
 
-document.getElementById('btn-entrega-devolver')?.addEventListener('click', async () => {
-  if (!entregaAtualId) return;
-  const motivo = prompt('Motivo da devolução:\n1 - Cliente não encontrado\n2 - Cliente recusou o pedido\n3 - Endereço incorreto\n4 - Outro\n\nDigite o número ou descreva:');
-  if (!motivo) return;
-  try {
-    await fb.updateDoc(fb.doc(db, 'pedidos_food', entregaAtualId), {
-      status: 'devolvido',
-      motivoDevolucao: motivo,
-      atualizadoEm: fb.serverTimestamp(),
-    });
-    showToast('↩️ Devolução registrada — retorne ao restaurante.');
-    resetarEntregaAtual();
-  } catch(e) { showToast('⚠️ Erro: ' + e.message); }
+document.getElementById('btn-entrega-devolver')?.addEventListener('click', () => {
+  showToast('⚠️ Devolução deve ser registrada pelo fluxo de ocorrência do Interfood.');
 });
 
 function resetarEntregaAtual() {
   entregaAtualId = null;
   entregaAtualDados = null;
-  document.getElementById('entrega-em-andamento').hidden = true;
-  document.getElementById('btn-entrega-coletei').hidden = false;
-  document.getElementById('btn-entrega-entregue').hidden = true;
-  document.getElementById('btn-entrega-devolver').hidden = true;
+  entregaAtualRef = null;
+
+  const card = document.getElementById('entrega-em-andamento');
+  const btnColeta = document.getElementById('btn-entrega-coletei');
+  const btnEntregue = document.getElementById('btn-entrega-entregue');
+  const btnDevolver = document.getElementById('btn-entrega-devolver');
+
+  if (card) card.hidden = true;
+  if (btnColeta) btnColeta.hidden = false;
+  if (btnEntregue) btnEntregue.hidden = true;
+  if (btnDevolver) btnDevolver.hidden = true;
 }
 
 function formatMoeda(v) { return 'R$ ' + Number(v||0).toFixed(2).replace('.', ','); }

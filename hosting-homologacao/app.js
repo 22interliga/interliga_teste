@@ -1293,35 +1293,167 @@ async function criarCorrida(origem, destino, preco, categoria, precoOriginal) {
 // ─────────────────────────────────────
 async function montarFilaPrioridade(origem, cidade, categoria) {
   if (!firebaseReady || !db) return [];
+
   try {
-    const snap = await fb.getDocs(fb.collection(db, 'motoristas_disponiveis'));
     const agora = Date.now();
-    const candidatos = [];
-    snap.forEach(docSnap => {
-      const d = docSnap.data();
-      const atualizadoMs = d.atualizadoEm?.toMillis ? d.atualizadoEm.toMillis() : null;
-      // Ignora motorista com localização desatualizada há mais de 2 min (provavelmente fechou o app)
-      if (atualizadoMs && (agora - atualizadoMs) > 2 * 60 * 1000) return;
+    const candidatosPorId = new Map();
+
+    function adicionarCandidato(id, d, tipo) {
+      const atualizadoMs = d.atualizadoEm?.toMillis
+        ? d.atualizadoEm.toMillis()
+        : null;
+
+      // Mesma proteção usada na disponibilidade normal:
+      // ignora publicação abandonada/desatualizada há mais de 2 minutos.
+      if (!atualizadoMs || (agora - atualizadoMs) > 2 * 60 * 1000) return;
+
       if (typeof d.lat !== 'number' || typeof d.lon !== 'number') return;
-      // Motorista é fixo na cidade dele — não entra na fila de corrida de outra cidade
+
+      // Motorista continua restrito à cidade operacional dele.
       if (cidade && d.cidade && d.cidade !== cidade) return;
-      // Só entra na fila se o veículo dele for da categoria pedida (X / Plus / Van)
-      // Só entra na fila se o veículo dele atender a categoria pedida (suporta motorista com mais de uma categoria)
-      const categoriasMotorista = Array.isArray(d.categorias) ? d.categorias : (d.categoria ? [d.categoria] : null);
-      if (categoria && categoriasMotorista && !categoriasMotorista.includes(categoria)) return;
-      const distanciaKm = (origem?.lat && origem?.lon)
+
+      const categoriasMotorista = Array.isArray(d.categorias)
+        ? d.categorias
+        : (d.categoria ? [d.categoria] : null);
+
+      if (
+        categoria &&
+        categoriasMotorista &&
+        !categoriasMotorista.includes(categoria)
+      ) return;
+
+      const distanciaKm = (
+        origem?.lat != null &&
+        origem?.lon != null
+      )
         ? haversineKm(origem.lat, origem.lon, d.lat, d.lon)
         : 999;
-      candidatos.push({ id: docSnap.id, distanciaKm, avaliacao: Number(d.avaliacao) || 0 });
+
+      /*
+       * Motorista finalizando já chegou ao destino da corrida atual.
+       * Acrescentamos uma margem operacional curta para concluir o
+       * atendimento atual antes de seguir ao próximo passageiro.
+       *
+       * A fila continua sendo ordenada por custo efetivo, evitando
+       * preferir automaticamente um motorista ocupado a um livre.
+       */
+      const margemFinalizacaoKm = tipo === 'finalizando' ? 0.8 : 0;
+      const custoEfetivoKm = distanciaKm + margemFinalizacaoKm;
+
+      const candidato = {
+        id,
+        tipo,
+        distanciaKm,
+        custoEfetivoKm,
+        avaliacao: Number(d.avaliacao) || 0,
+        corridaAtualId: d.corridaAtualId || null,
+      };
+
+      const existente = candidatosPorId.get(id);
+
+      // Se por alguma condição transitória o mesmo motorista aparecer
+      // nas duas coleções, a disponibilidade livre sempre prevalece.
+      if (!existente || tipo === 'livre') {
+        candidatosPorId.set(id, candidato);
+      }
+    }
+
+    // 1. Motoristas realmente livres.
+    console.log('[passageiro][fila] consultando motoristas_disponiveis');
+
+    const snapLivres = await fb.getDocs(
+      fb.collection(db, 'motoristas_disponiveis')
+    );
+
+    console.log(
+      '[passageiro][fila] motoristas_disponiveis lidos:',
+      snapLivres.size
+    );
+
+    snapLivres.forEach(docSnap => {
+      console.log(
+        '[passageiro][fila] candidato livre:',
+        docSnap.id,
+        docSnap.data()
+      );
+
+      adicionarCandidato(docSnap.id, docSnap.data(), 'livre');
     });
-    // Mais próximo primeiro; diferenças pequenas de distância (<300m) são decididas pela melhor avaliação
+
+    // 2. Motoristas que chegaram ao destino da corrida atual e estão
+    // aptos a reservar somente a próxima corrida.
+    console.log('[passageiro][fila] consultando motoristas_proxima_corrida');
+
+    const snapFinalizando = await fb.getDocs(
+      fb.collection(db, 'motoristas_proxima_corrida')
+    );
+
+    console.log(
+      '[passageiro][fila] motoristas_proxima_corrida lidos:',
+      snapFinalizando.size
+    );
+
+    snapFinalizando.forEach(docSnap => {
+      const d = docSnap.data();
+
+      console.log(
+        '[passageiro][fila] candidato finalizando bruto:',
+        docSnap.id,
+        d
+      );
+
+      if (d.estado !== 'finalizando') {
+        console.warn(
+          '[passageiro][fila] descartado por estado:',
+          docSnap.id,
+          d.estado
+        );
+        return;
+      }
+
+      if (!d.corridaAtualId) {
+        console.warn(
+          '[passageiro][fila] descartado sem corridaAtualId:',
+          docSnap.id
+        );
+        return;
+      }
+
+      adicionarCandidato(docSnap.id, d, 'finalizando');
+    });
+
+    const candidatos = Array.from(candidatosPorId.values());
+
     candidatos.sort((a, b) => {
-      if (Math.abs(a.distanciaKm - b.distanciaKm) > 0.3) return a.distanciaKm - b.distanciaKm;
+      if (Math.abs(a.custoEfetivoKm - b.custoEfetivoKm) > 0.3) {
+        return a.custoEfetivoKm - b.custoEfetivoKm;
+      }
+
       return b.avaliacao - a.avaliacao;
     });
+
+    console.log(
+      '[passageiro] fila híbrida:',
+      candidatos.map(c => ({
+        id: c.id,
+        tipo: c.tipo,
+        distanciaKm: Number(c.distanciaKm.toFixed(2)),
+        custoEfetivoKm: Number(c.custoEfetivoKm.toFixed(2)),
+        corridaAtualId: c.corridaAtualId,
+      }))
+    );
+
     return candidatos.map(c => c.id);
+
   } catch (e) {
-    console.warn('[passageiro] erro ao consultar motoristas disponíveis:', e);
+    console.error(
+      '[passageiro][fila] ERRO_AO_MONTAR_FILA_HIBRIDA',
+      e,
+      {
+        code: e?.code || null,
+        message: e?.message || String(e)
+      }
+    );
     return [];
   }
 }
@@ -1440,6 +1572,113 @@ function alertaNativo(tipo) {
   try { if (window.AndroidNative) window.AndroidNative.tocarAlerta(tipo); } catch (e) {}
 }
 
+
+function exibirMotoristaReservado(data) {
+  if (!data) return;
+
+  const blocoBusca = document.getElementById('block-searching');
+  const blocoMotorista = document.getElementById('block-driver');
+  const titulo = document.getElementById('tracking-title');
+  const subtitulo = document.getElementById('tracking-sub');
+  const eta = document.getElementById('tracking-eta');
+  const statusMotorista = document.getElementById('driver-status');
+
+  if (blocoBusca) blocoBusca.hidden = true;
+  if (blocoMotorista) blocoMotorista.hidden = false;
+
+  if (titulo) {
+    titulo.textContent = 'Motorista reservado';
+  }
+
+  if (subtitulo) {
+    subtitulo.textContent =
+      'Seu motorista está finalizando uma corrida próxima e seguirá até você em seguida.';
+  }
+
+  /*
+   * ETA da reserva:
+   * - 2 minutos de margem para concluir a corrida anterior;
+   * - mais o deslocamento da posição final publicada pelo motorista
+   *   até o ponto de embarque deste passageiro.
+   *
+   * Mantemos o mesmo modelo já usado pelo ETA ao vivo:
+   * aproximadamente 2,5 minutos por km em trânsito urbano.
+   */
+  const motoristaLat = Number(data.motoristaLat);
+  const motoristaLon = Number(data.motoristaLon);
+  const origemLat = Number(data.origemLat);
+  const origemLon = Number(data.origemLon);
+
+  let minutosEstimados = null;
+
+  if (
+    Number.isFinite(motoristaLat) &&
+    Number.isFinite(motoristaLon) &&
+    Number.isFinite(origemLat) &&
+    Number.isFinite(origemLon)
+  ) {
+    const km = haversineKm(
+      motoristaLat,
+      motoristaLon,
+      origemLat,
+      origemLon
+    );
+
+    minutosEstimados = Math.max(
+      3,
+      2 + Math.round(km * 2.5)
+    );
+  }
+
+  if (eta) {
+    eta.textContent = minutosEstimados !== null
+      ? minutosEstimados + ' min'
+      : 'Calculando...';
+  }
+
+  if (statusMotorista) {
+    statusMotorista.textContent = '🟠 Finalizando corrida anterior';
+  }
+
+  const nome = data.motoristaNome || 'Motorista';
+  const veiculo = data.motoristaVeiculo || '';
+  const placa = data.motoristaPlaca || '';
+  const avaliacao = data.motoristaAvaliacao || '4.8';
+
+  const nomeEl = document.getElementById('driver-name');
+  const detalheEl = document.getElementById('driver-detail');
+  const avatar = document.getElementById('driver-avatar');
+
+  if (nomeEl) {
+    nomeEl.textContent = nome;
+  }
+
+  if (detalheEl) {
+    detalheEl.textContent =
+      `⭐ ${avaliacao} · ${veiculo} · ${placa}`;
+  }
+
+  if (avatar) {
+    const iniciais = nome.slice(0, 2).toUpperCase();
+
+    renderAvatarInterliga(
+      avatar,
+      data.motoristaSelfie || null,
+      iniciais
+    );
+  }
+
+  // A corrida já possui motorista reservado, portanto não existe
+  // mais busca/fila ativa para este passageiro.
+  pararFilaWatchdog();
+
+  atualizarStatusHistoricoLocal('reservada', {
+    motoristaNome: nome,
+    motoristaVeiculo: veiculo,
+    motoristaPlaca: placa,
+  });
+}
+
 function ouvirAceiteCorrida(corridaId) {
   console.log('[passageiro] iniciando listener de aceite para corrida:', corridaId);
   if (!db) { console.warn('[passageiro] db não disponível'); return; }
@@ -1490,6 +1729,16 @@ function ouvirAceiteCorrida(corridaId) {
       state.corridaId = null;
 
       setTimeout(() => go('screen-home'), 2500);
+      return;
+    }
+
+
+    if (data.status === 'reservada') {
+      console.log(
+        '[passageiro] motorista reservado enquanto finaliza corrida anterior.'
+      );
+
+      exibirMotoristaReservado(data);
       return;
     }
 
@@ -1717,9 +1966,9 @@ function exibirMotoristaEncontrado({ nome, veiculo, placa, avaliacao, motoristaI
   const blockDriver = document.getElementById('block-driver');
   blockDriver.hidden = false;
 
-  document.getElementById('tracking-title').textContent = 'Motorista encontrado!';
-  document.getElementById('tracking-sub').textContent = 'A caminho do seu local';
-  document.getElementById('tracking-eta').textContent = '4 min';
+  document.getElementById('tracking-title').textContent = 'Motorista a caminho';
+  document.getElementById('tracking-sub').textContent = 'Seu motorista está seguindo até o seu local';
+  document.getElementById('tracking-eta').textContent = 'Calculando...';
 
   const driverAvatar = document.getElementById('driver-avatar');
   const inicialMotorista = (nome || 'Motorista').slice(0, 2).toUpperCase();

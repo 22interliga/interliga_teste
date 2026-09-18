@@ -139,15 +139,108 @@ match /estabelecimentos/{lojaId}{allow read:if souDonoDaLoja(fid,lojaId)||entreg
         (
           request.auth.uid == resource.data.passageiroId
           && request.resource.data.passageiroId == resource.data.passageiroId
-          && request.resource.data.motoristaId == resource.data.motoristaId
+
+          // Passageiro pode apenas inicializar/avancar a fila de oferta
+          // enquanto a corrida continua aguardando.
+          // Ele nunca atribui motoristaId por este caminho.
+          && resource.data.status == 'aguardando'
+          && request.resource.data.status == 'aguardando'
+          && request.resource.data.diff(resource.data).affectedKeys()
+               .hasOnly([
+                 'filaMotoristas',
+                 'filaIndiceAtual',
+                 'motoristaAlvoAtual',
+                 'ofertaExpiraEm',
+                 'rodadaFila'
+               ])
+        )
+
+        ||
+
+        (
+          // Passageiro pode encerrar a própria busca somente após
+          // permanecer aguardando, sem atribuir ou alterar motorista.
+          request.auth.uid == resource.data.passageiroId
+          && resource.data.status == 'aguardando'
+          && request.resource.data.status == 'sem_motorista'
+          && request.resource.data.passageiroId == resource.data.passageiroId
+          && request.resource.data.diff(resource.data).affectedKeys()
+               .hasOnly([
+                 'status',
+                 'buscaEncerradaEm'
+               ])
         )
 
         ||
 
         (
           (
-            resource.data.status == 'aguardando' ||
-            request.auth.uid == resource.data.motoristaId
+            (
+              resource.data.status == 'aguardando'
+              && (
+                !resource.data.keys().hasAny(['motoristaAlvoAtual'])
+                || resource.data.motoristaAlvoAtual == request.auth.uid
+              )
+              && request.resource.data.motoristaId == request.auth.uid
+              && (
+                request.resource.data.status == 'aceita'
+                || request.resource.data.status == 'reservada'
+              )
+            )
+
+            ||
+
+            (
+              // Recusa/rotação da oferta:
+              // o motorista alvo pode apenas devolver a corrida para a fila,
+              // sem assumir a corrida e sem alterar dados de negócio.
+              resource.data.status == 'aguardando'
+              && resource.data.keys().hasAny(['motoristaAlvoAtual'])
+              && resource.data.motoristaAlvoAtual == request.auth.uid
+              && request.resource.data.status == 'aguardando'
+              && request.resource.data.motoristaId == resource.data.motoristaId
+              && request.resource.data.diff(resource.data).affectedKeys()
+                   .hasOnly([
+                     'recusantes',
+                     'filaIndiceAtual',
+                     'motoristaAlvoAtual',
+                     'ofertaExpiraEm'
+                   ])
+            )
+
+            ||
+
+            (
+              request.auth.uid == resource.data.motoristaId
+              && request.resource.data.motoristaId == resource.data.motoristaId
+
+              // Depois que a corrida pertence ao motorista,
+              // somente transições operacionais conhecidas são aceitas.
+              && (
+                (
+                  resource.data.status == 'reservada'
+                  && request.resource.data.status == 'aceita'
+                )
+                ||
+                (
+                  resource.data.status == 'aceita'
+                  && (
+                    request.resource.data.status == 'aceita'
+                    || request.resource.data.status == 'em_andamento'
+                    || request.resource.data.status == 'cancelada'
+                  )
+                )
+                ||
+                (
+                  resource.data.status == 'em_andamento'
+                  && (
+                    request.resource.data.status == 'em_andamento'
+                    || request.resource.data.status == 'finalizada'
+                    || request.resource.data.status == 'cancelada'
+                  )
+                )
+              )
+            )
           )
           &&
           request.resource.data.passageiroId == resource.data.passageiroId
@@ -206,6 +299,13 @@ match /estabelecimentos/{lojaId}{allow read:if souDonoDaLoja(fid,lojaId)||entreg
     }
 
     match /motoristas_disponiveis/{motoristaId} {
+      allow read: if signedIn();
+
+      allow create, update, delete: if signedIn()
+        && request.auth.uid == motoristaId;
+    }
+
+    match /motoristas_proxima_corrida/{motoristaId} {
       allow read: if signedIn();
 
       allow create, update, delete: if signedIn()
