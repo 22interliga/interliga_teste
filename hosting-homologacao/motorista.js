@@ -1029,6 +1029,7 @@ function encerrarOperacaoMotorista() {
   try { removerPreDisponibilidadeProximaCorrida(); } catch (e) {}
   try { pararEscutaProximaCorrida(); } catch (e) {}
   try { pararEscutaOferta(); } catch (e) {}
+  try { encerrarListenersEntregasInterfood(); } catch (e) {}
   try { clearInterval(state.countdownInterval); } catch (e) {}
   try { clearInterval(state.somRepeticaoInterval); } catch (e) {}
   try { window.speechSynthesis?.cancel(); } catch (e) {}
@@ -3846,6 +3847,7 @@ async function aplicarStatusCadastroMotorista(dados) {
     if (state.online) {
       iniciarDisponibilidade();
       iniciarEscutaCorridas();
+      iniciarListenerEntregas();
     }
 
     // Verifica se havia corrida ativa antes de fechar o app
@@ -3996,7 +3998,18 @@ async function aplicarStatusCadastroMotorista(dados) {
       );
     }
 
-    go('screen-home');
+    // Deep link controlado para o módulo Interfood.
+    // A franquia continua vindo exclusivamente do perfil autenticado;
+    // nenhum parâmetro da URL é usado como autorização.
+    const abrirAposLogin =
+      new URLSearchParams(window.location.search).get('abrir');
+
+    if (abrirAposLogin === 'entregas') {
+      go('screen-entregas');
+    } else {
+      go('screen-home');
+    }
+
     configurarNotificacoesPush();
   } else if (dados.verificacao === 'rejeitado') {
     document.getElementById('rejeicao-mot-motivo-texto').textContent = dados.motivoRejeicao || 'Houve um problema com seus dados ou documentos. Tente cadastrar de novo, com calma.';
@@ -4172,11 +4185,166 @@ history.pushState(null, '', '');
 // ENTREGAS INTERIFOOD — motoboy recebe e entrega pedidos
 // ═══════════════════════════════════════
 let entregasListenerUnsub = null;
+let entregaLoteListenerUnsub = null;
+let lotePersistenteAtual = null;
+let sincronizarEntregasAtivasAtual = null;
 let entregaAtualId = null;
 let entregaAtualDados = null;
 let entregaAtualRef = null;
 let entregaFranquiaId = null;
 let entregasLojasUnsubs = [];
+
+// Lote Interfood: no máximo 2 pedidos simultâneos.
+// Durante a migração, entregaAtual* continua representando
+// a entrega selecionada na interface.
+const MAX_ENTREGAS_LOTE = 2;
+let entregasAtivas = [];
+
+function chaveEntrega(lojaId, pedidoId) {
+  return `${lojaId}::${pedidoId}`;
+}
+
+function encontrarEntregaAtiva(lojaId, pedidoId) {
+  const chave = chaveEntrega(lojaId, pedidoId);
+  return entregasAtivas.find(e => e.chave === chave) || null;
+}
+
+function loteTemSaidaIniciada() {
+  return entregasAtivas.some(e =>
+    e.status === 'Saiu para entrega' ||
+    e.status === 'Concluído'
+  );
+}
+
+function lotePodeReceberOutraEntrega() {
+  return (
+    entregasAtivas.length < MAX_ENTREGAS_LOTE &&
+    !loteTemSaidaIniciada()
+  );
+}
+
+function adicionarEntregaAtiva(dados, ref) {
+  const chave = chaveEntrega(dados.lojaId, dados.id);
+
+  const existente = entregasAtivas.find(e => e.chave === chave);
+  if (existente) {
+    Object.assign(existente, dados, { ref });
+    return existente;
+  }
+
+  if (entregasAtivas.length >= MAX_ENTREGAS_LOTE) {
+    throw new Error('Limite de 2 entregas simultâneas atingido.');
+  }
+
+  const item = {
+    ...dados,
+    chave,
+    ref
+  };
+
+  entregasAtivas.push(item);
+  return item;
+}
+
+function removerEntregaAtiva(lojaId, pedidoId) {
+  const chave = chaveEntrega(lojaId, pedidoId);
+  entregasAtivas = entregasAtivas.filter(e => e.chave !== chave);
+}
+
+function coordenadasEntregaValidas(pedido) {
+  const lat = Number(pedido?.localizacaoEntrega?.latitude);
+  const lon = Number(pedido?.localizacaoEntrega?.longitude);
+  return Number.isFinite(lat) && Number.isFinite(lon);
+}
+
+function calcularSequenciaLote(pedidoA, pedidoB) {
+  if (!pedidoA || !pedidoB) return null;
+  if (pedidoA.lojaId !== pedidoB.lojaId) return null;
+
+  const lojaLat = Number(pedidoA.restauranteLat);
+  const lojaLon = Number(pedidoA.restauranteLon);
+
+  if (
+    !Number.isFinite(lojaLat) ||
+    !Number.isFinite(lojaLon) ||
+    !coordenadasEntregaValidas(pedidoA) ||
+    !coordenadasEntregaValidas(pedidoB)
+  ) {
+    return null;
+  }
+
+  const aLat = Number(pedidoA.localizacaoEntrega.latitude);
+  const aLon = Number(pedidoA.localizacaoEntrega.longitude);
+  const bLat = Number(pedidoB.localizacaoEntrega.latitude);
+  const bLon = Number(pedidoB.localizacaoEntrega.longitude);
+
+  const lojaA = haversineKm(lojaLat, lojaLon, aLat, aLon);
+  const lojaB = haversineKm(lojaLat, lojaLon, bLat, bLon);
+  const entreClientes = haversineKm(aLat, aLon, bLat, bLon);
+
+  const rotaAB = lojaA + entreClientes;
+  const rotaBA = lojaB + entreClientes;
+
+  if (rotaAB <= rotaBA) {
+    return {
+      ordem: [pedidoA.id, pedidoB.id],
+      kmEstimado: rotaAB,
+      kmEntreClientes: entreClientes
+    };
+  }
+
+  return {
+    ordem: [pedidoB.id, pedidoA.id],
+    kmEstimado: rotaBA,
+    kmEntreClientes: entreClientes
+  };
+}
+
+// Compatibilidade inicial do lote:
+// - mesmo estabelecimento;
+// - coordenadas válidas;
+// - ganho real ao transportar os dois juntos;
+// - desvio adicional limitado a 30% da maior entrega individual.
+function avaliarCompatibilidadeLote(pedidoA, pedidoB) {
+  const sequencia = calcularSequenciaLote(pedidoA, pedidoB);
+  if (!sequencia) {
+    return { compativel: false, motivo: 'Pedidos sem rota compatível.' };
+  }
+
+  const lojaLat = Number(pedidoA.restauranteLat);
+  const lojaLon = Number(pedidoA.restauranteLon);
+
+  const aLat = Number(pedidoA.localizacaoEntrega.latitude);
+  const aLon = Number(pedidoA.localizacaoEntrega.longitude);
+  const bLat = Number(pedidoB.localizacaoEntrega.latitude);
+  const bLon = Number(pedidoB.localizacaoEntrega.longitude);
+
+  const kmA = haversineKm(lojaLat, lojaLon, aLat, aLon);
+  const kmB = haversineKm(lojaLat, lojaLon, bLat, bLon);
+
+  const maiorIndividual = Math.max(kmA, kmB);
+  const separadosKm = kmA + kmB;
+  const adicionalKm = Math.max(0, sequencia.kmEstimado - maiorIndividual);
+  const limiteAdicionalKm = maiorIndividual * 0.30;
+
+  const compativel =
+    sequencia.kmEstimado < separadosKm &&
+    adicionalKm <= limiteAdicionalKm;
+
+  return {
+    compativel,
+    motivo: compativel
+      ? 'Destinos compatíveis.'
+      : 'Segundo destino gera desvio excessivo.',
+    ordem: sequencia.ordem,
+    kmEstimado: sequencia.kmEstimado,
+    kmEntreClientes: sequencia.kmEntreClientes,
+    kmA,
+    kmB,
+    adicionalKm,
+    limiteAdicionalKm
+  };
+}
 
 function limparListenersEntregasLojas() {
   entregasLojasUnsubs.forEach(unsub => {
@@ -4185,19 +4353,53 @@ function limparListenersEntregasLojas() {
   entregasLojasUnsubs = [];
 }
 
+function encerrarListenersEntregasInterfood() {
+  if (entregasListenerUnsub) {
+    try { entregasListenerUnsub(); } catch (_) {}
+    entregasListenerUnsub = null;
+  }
+
+  limparListenersEntregasLojas();
+
+  if (entregaLoteListenerUnsub) {
+    try { entregaLoteListenerUnsub(); } catch (_) {}
+    entregaLoteListenerUnsub = null;
+  }
+
+  lotePersistenteAtual = null;
+  sincronizarEntregasAtivasAtual = null;
+}
+
 function renderizarEntregasDisponiveis(pedidos) {
   const badge = document.getElementById('badge-entregas');
   const lista = document.getElementById('lista-pedidos-entrega');
   if (!lista) return;
 
-  if (entregaAtualId) return;
+  let pedidosExibidos = Array.isArray(pedidos) ? pedidos : [];
 
-  if (badge) {
-    badge.textContent = pedidos.length;
-    badge.style.display = pedidos.length > 0 ? 'flex' : 'none';
+  if (entregasAtivas.length >= MAX_ENTREGAS_LOTE || loteTemSaidaIniciada()) {
+    pedidosExibidos = [];
+  } else if (entregasAtivas.length === 1) {
+    const primeira = entregasAtivas[0];
+
+    pedidosExibidos = pedidosExibidos
+      .filter(p =>
+        p.id !== primeira.id &&
+        p.lojaId === primeira.lojaId
+      )
+      .map(p => ({
+        ...p,
+        compatibilidadeLote: avaliarCompatibilidadeLote(primeira, p)
+      }))
+      .filter(p => p.compatibilidadeLote.compativel);
   }
 
-  if (pedidos.length === 0) {
+  if (badge) {
+    badge.textContent = pedidosExibidos.length;
+    badge.style.display = pedidosExibidos.length > 0 ? 'flex' : 'none';
+  }
+
+  if (pedidosExibidos.length === 0) {
     lista.innerHTML = `
       <div style="text-align:center;color:#9098A8;padding:30px;">
         <div style="font-size:32px;margin-bottom:8px;">🛵</div>
@@ -4207,7 +4409,7 @@ function renderizarEntregasDisponiveis(pedidos) {
     return;
   }
 
-  lista.innerHTML = pedidos.map(p => {
+  lista.innerHTML = pedidosExibidos.map(p => {
     const itens = (p.itens || []).map(i =>
       `${i.qtd || i.quantidade || 1}x ${i.nome || 'Item'}`
     ).join(', ');
@@ -4251,6 +4453,31 @@ async function iniciarListenerEntregas() {
 
     entregaFranquiaId = perfil.franquiaId;
 
+    const lotePersistenteRef = fb.doc(
+      db,
+      'franquias',
+      entregaFranquiaId,
+      'lotesEntregadores',
+      meuMotoristaId
+    );
+
+    entregaLoteListenerUnsub = fb.onSnapshot(
+      lotePersistenteRef,
+      snap => {
+        lotePersistenteAtual = snap.exists()
+          ? (snap.data() || null)
+          : null;
+
+        if (typeof sincronizarEntregasAtivasAtual === 'function') {
+          sincronizarEntregasAtivasAtual();
+        }
+      },
+      erro => {
+        console.error('[Interfood] Erro ao acompanhar lote persistente:', erro);
+        lotePersistenteAtual = null;
+      }
+    );
+
     const lojasRef = fb.collection(
       db,
       'franquias',
@@ -4262,8 +4489,80 @@ async function iniciarListenerEntregas() {
       limparListenersEntregasLojas();
 
       const cachePorLoja = new Map();
+      const cacheMinhasEntregasPorLoja = new Map();
+
+      const sincronizarEntregasAtivas = () => {
+        const recuperadas = [];
+
+        cacheMinhasEntregasPorLoja.forEach(lista => {
+          recuperadas.push(...lista);
+        });
+
+        const ativas = recuperadas.filter(p =>
+          p.status === 'Entregador aceitou' ||
+          p.status === 'Coletado' ||
+          p.status === 'Saiu para entrega'
+        );
+
+        // Não esconder inconsistência: se houver mais de 2 no Firestore,
+        // mantém todas em memória e bloqueia novos aceites.
+        entregasAtivas = ativas.map(p => ({
+          ...p,
+          chave: chaveEntrega(p.lojaId, p.id),
+          ref: fb.doc(
+            db,
+            'franquias',
+            entregaFranquiaId,
+            'estabelecimentos',
+            p.lojaId,
+            'pedidos',
+            p.id
+          )
+        }));
+
+        if (lotePersistenteAtual?.fase === 'em_entrega' && Array.isArray(lotePersistenteAtual.pedidos)) {
+          const ordemPersistida = new Map(lotePersistenteAtual.pedidos.map((id, indice) => [id, indice]));
+          entregasAtivas.sort((a, b) => (ordemPersistida.get(a.id) ?? Number.MAX_SAFE_INTEGER) - (ordemPersistida.get(b.id) ?? Number.MAX_SAFE_INTEGER));
+        }
+
+        if (entregasAtivas.length > MAX_ENTREGAS_LOTE) {
+          console.error(
+            '[Interfood] INCONSISTÊNCIA:',
+            entregasAtivas.length,
+            'entregas ativas. Novos aceites bloqueados.'
+          );
+        }
+
+        if (entregasAtivas.length > 0) {
+          const primeiroIdRota =
+            lotePersistenteAtual?.fase === 'em_entrega' &&
+            Array.isArray(lotePersistenteAtual.pedidos)
+              ? lotePersistenteAtual.pedidos[0]
+              : null;
+
+          const preferida =
+            (primeiroIdRota
+              ? entregasAtivas.find(p =>
+                  p.id === primeiroIdRota &&
+                  p.status === 'Saiu para entrega'
+                )
+              : null) ||
+            entregasAtivas.find(p => p.status === 'Saiu para entrega') ||
+            entregasAtivas.find(p => p.status === 'Entregador aceitou') ||
+            entregasAtivas.find(p => p.status === 'Coletado') ||
+            entregasAtivas[0];
+
+          renderizarEntregaAtiva(preferida);
+        } else {
+          renderizarEntregaAtiva(null);
+        }
+      };
+
+      sincronizarEntregasAtivasAtual = sincronizarEntregasAtivas;
 
       const atualizarTela = () => {
+        sincronizarEntregasAtivas();
+
         const todos = [];
         cachePorLoja.forEach(lista => todos.push(...lista));
         renderizarEntregasDisponiveis(todos);
@@ -4312,6 +4611,48 @@ async function iniciarListenerEntregas() {
         });
 
         entregasLojasUnsubs.push(unsub);
+
+        // Recuperação das entregas já assumidas pelo próprio motorista.
+        // Consulta somente pelo UID; os status ativos são filtrados no cliente.
+        const qMinhas = fb.query(
+          pedidosRef,
+          fb.where('entregador.uid', '==', meuMotoristaId)
+        );
+
+        const unsubMinhas = fb.onSnapshot(qMinhas, minhasSnap => {
+          const minhas = minhasSnap.docs
+            .map(docSnap => ({
+              id: docSnap.id,
+              lojaId,
+              restauranteNome: loja.nome || 'Estabelecimento',
+              enderecoRestaurante: loja.enderecoLoja || '',
+              restauranteLat: Number(loja.latitudeLoja),
+              restauranteLon: Number(loja.longitudeLoja),
+              ...docSnap.data()
+            }))
+            .filter(p =>
+              p.entrega === 'Interfood' &&
+              p.operadorEntrega === 'Intermobilidade' &&
+              (
+                p.status === 'Entregador aceitou' ||
+                p.status === 'Coletado' ||
+                p.status === 'Saiu para entrega'
+              )
+            );
+
+          cacheMinhasEntregasPorLoja.set(lojaId, minhas);
+          atualizarTela();
+        }, erro => {
+          console.error(
+            '[Interfood] Erro ao recuperar entregas do motorista:',
+            lojaId,
+            erro
+          );
+          cacheMinhasEntregasPorLoja.set(lojaId, []);
+          atualizarTela();
+        });
+
+        entregasLojasUnsubs.push(unsubMinhas);
       });
 
       atualizarTela();
@@ -4346,8 +4687,72 @@ async function aceitarEntrega(lojaId, pedidoId) {
       lojaId
     );
 
+    // Trava local antes da transação:
+    // impede terceiro pedido e novos aceites após iniciar a saída.
+    if (!lotePodeReceberOutraEntrega()) {
+      throw new Error('O lote já está completo ou já saiu para entrega.');
+    }
+
+    // Para o segundo pedido, valida mesmo estabelecimento
+    // e compatibilidade geográfica antes de assumir o pedido.
+    if (entregasAtivas.length === 1) {
+      const primeira = entregasAtivas[0];
+
+      if (primeira.lojaId !== lojaId) {
+        throw new Error('O segundo pedido precisa ser do mesmo estabelecimento.');
+      }
+
+      const [pedidoCandidatoSnap, lojaCandidatoSnap] = await Promise.all([
+        fb.getDoc(pedidoRef),
+        fb.getDoc(lojaRef)
+      ]);
+
+      if (!pedidoCandidatoSnap.exists()) {
+        throw new Error('Pedido não encontrado.');
+      }
+
+      const pedidoCandidato = {
+        ...pedidoCandidatoSnap.data(),
+        id: pedidoId,
+        lojaId,
+        restauranteNome: lojaCandidatoSnap.exists()
+          ? (lojaCandidatoSnap.data()?.nome || 'Estabelecimento')
+          : 'Estabelecimento',
+        enderecoRestaurante: lojaCandidatoSnap.exists()
+          ? (lojaCandidatoSnap.data()?.enderecoLoja || '')
+          : '',
+        restauranteLat: lojaCandidatoSnap.exists()
+          ? Number(lojaCandidatoSnap.data()?.latitudeLoja)
+          : NaN,
+        restauranteLon: lojaCandidatoSnap.exists()
+          ? Number(lojaCandidatoSnap.data()?.longitudeLoja)
+          : NaN
+      };
+
+      const compatibilidade = avaliarCompatibilidadeLote(
+        primeira,
+        pedidoCandidato
+      );
+
+      if (!compatibilidade.compativel) {
+        throw new Error(
+          compatibilidade.motivo || 'Segundo pedido incompatível com a rota atual.'
+        );
+      }
+    }
+
+    const loteRef = fb.doc(
+      db,
+      'franquias',
+      entregaFranquiaId,
+      'lotesEntregadores',
+      meuMotoristaId
+    );
+
     await fb.runTransaction(db, async transaction => {
+      // Todas as leituras antes das escritas.
       const pedidoSnap = await transaction.get(pedidoRef);
+      const loteSnap = await transaction.get(loteRef);
 
       if (!pedidoSnap.exists()) {
         throw new Error('Pedido não encontrado.');
@@ -4361,6 +4766,63 @@ async function aceitarEntrega(lojaId, pedidoId) {
         pedido.operadorEntrega !== 'Intermobilidade'
       ) {
         throw new Error('Esta entrega não está mais disponível.');
+      }
+
+      let pedidosLote = [];
+
+      if (loteSnap.exists()) {
+        const lotePersistido = loteSnap.data() || {};
+
+        if (
+          lotePersistido.entregadorUid !== meuMotoristaId ||
+          lotePersistido.franquiaId !== entregaFranquiaId
+        ) {
+          throw new Error('O lote persistente pertence a outro entregador.');
+        }
+
+        if (lotePersistido.lojaId !== lojaId) {
+          throw new Error(
+            'O segundo pedido precisa ser do mesmo estabelecimento.'
+          );
+        }
+
+        if (lotePersistido.fase !== 'coleta') {
+          throw new Error(
+            'Não é possível aceitar outro pedido após iniciar as entregas.'
+          );
+        }
+
+        pedidosLote = Array.isArray(lotePersistido.pedidos)
+          ? [...lotePersistido.pedidos]
+          : [];
+
+        if (pedidosLote.includes(pedidoId)) {
+          throw new Error('Este pedido já pertence ao lote.');
+        }
+
+        if (pedidosLote.length >= MAX_ENTREGAS_LOTE) {
+          throw new Error('Limite de 2 entregas simultâneas atingido.');
+        }
+
+        pedidosLote.push(pedidoId);
+
+        transaction.update(loteRef, {
+          pedidos: pedidosLote,
+          fase: 'coleta',
+          atualizadoEm: fb.serverTimestamp()
+        });
+
+      } else {
+        pedidosLote = [pedidoId];
+
+        transaction.set(loteRef, {
+          entregadorUid: meuMotoristaId,
+          franquiaId: entregaFranquiaId,
+          lojaId,
+          pedidos: pedidosLote,
+          fase: 'coleta',
+          atualizadoEm: fb.serverTimestamp()
+        });
       }
 
       transaction.update(pedidoRef, {
@@ -4381,10 +4843,9 @@ async function aceitarEntrega(lojaId, pedidoId) {
     const pedido = pedidoSnap.data() || {};
     const loja = lojaSnap.exists() ? (lojaSnap.data() || {}) : {};
 
-    entregaAtualId = pedidoId;
-    entregaAtualRef = pedidoRef;
-    entregaAtualDados = {
+    const dadosEntregaAceita = {
       ...pedido,
+      id: pedidoId,
       lojaId,
       restauranteNome: loja.nome || 'Estabelecimento',
       enderecoRestaurante: loja.enderecoLoja || '',
@@ -4392,25 +4853,14 @@ async function aceitarEntrega(lojaId, pedidoId) {
       restauranteLon: Number(loja.longitudeLoja)
     };
 
-    document.getElementById('entrega-em-andamento').hidden = false;
-    document.getElementById('entrega-restaurante-nome').textContent =
-      entregaAtualDados.restauranteNome || '—';
-    document.getElementById('entrega-restaurante-end').textContent =
-      entregaAtualDados.enderecoRestaurante || 'Ver no mapa';
-    document.getElementById('entrega-cliente-nome').textContent =
-      entregaAtualDados.cliente || '—';
-    document.getElementById('entrega-cliente-end').textContent =
-      entregaAtualDados.endereco || '—';
+    const entregaAdicionada = adicionarEntregaAtiva(
+      dadosEntregaAceita,
+      pedidoRef
+    );
 
-    document.getElementById('lista-pedidos-entrega').innerHTML = '';
+      renderizarEntregaAtiva(entregaAdicionada);
 
-    const btnColeta = document.getElementById('btn-entrega-coletei');
-    const btnEntregue = document.getElementById('btn-entrega-entregue');
-    const btnDevolver = document.getElementById('btn-entrega-devolver');
-
-    if (btnColeta) btnColeta.hidden = false;
-    if (btnEntregue) btnEntregue.hidden = true;
-    if (btnDevolver) btnDevolver.hidden = true;
+      document.getElementById('lista-pedidos-entrega').innerHTML = '';
 
     showToast('✅ Entrega aceita! Vá ao estabelecimento buscar o pedido.');
 
@@ -4421,49 +4871,572 @@ async function aceitarEntrega(lojaId, pedidoId) {
 
 window.aceitarEntrega = aceitarEntrega;
 
+function renderizarListaLoteEntrega() {
+  const bloco = document.getElementById('bloco-lote-entrega');
+  const contador = document.getElementById('contador-lote-entrega');
+  const lista = document.getElementById('lista-lote-entrega');
+
+  if (!bloco || !contador || !lista) return;
+
+  if (entregasAtivas.length === 0) {
+    bloco.hidden = true;
+    lista.innerHTML = '';
+    contador.textContent = '0/2';
+    return;
+  }
+
+  bloco.hidden = false;
+  contador.textContent = `${entregasAtivas.length}/${MAX_ENTREGAS_LOTE}`;
+
+  lista.replaceChildren();
+  entregasAtivas.forEach((entrega, indice) => {
+    const selecionada =
+      entrega.id === entregaAtualId &&
+      entrega.lojaId === entregaAtualDados?.lojaId;
+
+    const cliente = String(
+      entrega.cliente || `Pedido ${indice + 1}`
+    );
+
+    const endereco = String(
+      entrega.endereco || 'Endereço não informado'
+    );
+
+    const status = String(
+      entrega.status || '—'
+    );
+
+    const borda = selecionada ? '#FF6B00' : '#374151';
+    const fundo = selecionada ? '#1F2937' : '#111827';
+
+    const botao = document.createElement("button");
+    botao.type = "button";
+    botao.dataset.loteLoja = String(entrega.lojaId || "");
+    botao.dataset.lotePedido = String(entrega.id || "");
+    botao.style.cssText = `width:100%;text-align:left;padding:9px;border-radius:8px;border:1px solid ${borda};background:${fundo};color:#E8EAF0;cursor:pointer;`;
+
+    const linhaCliente = document.createElement("div");
+    linhaCliente.style.cssText = "font-size:12px;font-weight:700;";
+    linhaCliente.textContent = `${indice + 1}. ${cliente}`;
+
+    const linhaEndereco = document.createElement("div");
+    linhaEndereco.style.cssText = "font-size:11px;color:#9098A8;margin-top:3px;";
+    linhaEndereco.textContent = endereco;
+
+    const linhaStatus = document.createElement("div");
+    linhaStatus.style.cssText = "font-size:11px;color:#FFB067;margin-top:3px;";
+    linhaStatus.textContent = status;
+
+    botao.append(linhaCliente, linhaEndereco, linhaStatus);
+    lista.appendChild(botao);
+  });
+
+  lista.querySelectorAll('[data-lote-pedido]').forEach(botao => {
+    botao.addEventListener('click', () => {
+      selecionarEntregaAtiva(
+        botao.dataset.loteLoja,
+        botao.dataset.lotePedido
+      );
+    });
+  });
+}
+
+function renderizarEntregaAtiva(entrega) {
+  const card = document.getElementById('entrega-em-andamento');
+  const btnColeta = document.getElementById('btn-entrega-coletei');
+  const btnSair = document.getElementById('btn-entrega-sair');
+  const btnEntregue = document.getElementById('btn-entrega-entregue');
+  const btnDevolver = document.getElementById('btn-entrega-devolver');
+  const btnDevolverRestaurante =
+    document.getElementById('btn-entrega-devolver-restaurante');
+
+  if (!entrega) {
+    entregaAtualId = null;
+    entregaAtualDados = null;
+    entregaAtualRef = null;
+
+    if (card) card.hidden = true;
+    if (btnColeta) btnColeta.hidden = true;
+    if (btnSair) btnSair.hidden = true;
+    if (btnEntregue) btnEntregue.hidden = true;
+    if (btnDevolver) btnDevolver.hidden = true;
+    if (btnDevolverRestaurante) btnDevolverRestaurante.hidden = true;
+
+    renderizarListaLoteEntrega();
+    return;
+  }
+
+  entregaAtualId = entrega.id;
+  entregaAtualDados = entrega;
+  entregaAtualRef = entrega.ref || fb.doc(
+    db,
+    'franquias',
+    entregaFranquiaId,
+    'estabelecimentos',
+    entrega.lojaId,
+    'pedidos',
+    entrega.id
+  );
+
+  entregaAtualDados.ref = entregaAtualRef;
+
+  if (card) card.hidden = false;
+
+  const restauranteNome =
+    document.getElementById('entrega-restaurante-nome');
+  const restauranteEnd =
+    document.getElementById('entrega-restaurante-end');
+  const clienteNome =
+    document.getElementById('entrega-cliente-nome');
+  const clienteEnd =
+    document.getElementById('entrega-cliente-end');
+
+  if (restauranteNome) {
+    restauranteNome.textContent =
+      entrega.restauranteNome || '—';
+  }
+
+  if (restauranteEnd) {
+    restauranteEnd.textContent =
+      entrega.enderecoRestaurante || 'Ver no mapa';
+  }
+
+  if (clienteNome) {
+    clienteNome.textContent =
+      entrega.cliente || '—';
+  }
+
+  if (clienteEnd) {
+    clienteEnd.textContent =
+      entrega.endereco || '—';
+  }
+
+  const status = entrega.status;
+
+  if (btnColeta) {
+    btnColeta.hidden = status !== 'Entregador aceitou';
+  }
+
+  if (btnSair) {
+    const todosColetados =
+      entregasAtivas.length > 0 &&
+      entregasAtivas.every(e => e.status === 'Coletado');
+
+    btnSair.hidden =
+      status !== 'Coletado' ||
+      todosColetados === false;
+  }
+
+  if (btnEntregue) {
+    btnEntregue.hidden = status !== 'Saiu para entrega';
+  }
+
+  if (btnDevolver) {
+    btnDevolver.hidden = status !== 'Saiu para entrega';
+  }
+
+  if (btnDevolverRestaurante) {
+    btnDevolverRestaurante.hidden = true;
+  }
+
+  renderizarListaLoteEntrega();
+}
+
+function selecionarEntregaAtiva(lojaId, pedidoId) {
+  const entrega = encontrarEntregaAtiva(lojaId, pedidoId);
+
+  if (!entrega) {
+    console.warn(
+      '[Interfood] Entrega ativa não encontrada:',
+      lojaId,
+      pedidoId
+    );
+    return false;
+  }
+
+  renderizarEntregaAtiva(entrega);
+  return true;
+}
+
 document.getElementById('btn-entrega-coletei')?.addEventListener('click', async () => {
-  if (!entregaAtualRef) return;
+  if (!entregaAtualRef || !entregaAtualDados) return;
 
   try {
+    if (entregaAtualDados.status !== 'Entregador aceitou') {
+      throw new Error('Esta entrega não está aguardando coleta.');
+    }
+
+    const lojaColetadaId = entregaAtualDados.lojaId;
+    const pedidoColetadoId = entregaAtualId;
+
     await fb.updateDoc(entregaAtualRef, {
       status: 'Coletado',
       coletadoEm: fb.serverTimestamp()
     });
 
-    await fb.updateDoc(entregaAtualRef, {
-      status: 'Saiu para entrega',
-      saiuEntregaEm: fb.serverTimestamp()
-    });
+    const itemAtivo = entregasAtivas.find(
+      e =>
+        e.id === pedidoColetadoId &&
+        e.lojaId === lojaColetadaId
+    );
 
-    if (entregaAtualDados) {
-      entregaAtualDados.status = 'Saiu para entrega';
+    if (itemAtivo) {
+      itemAtivo.status = 'Coletado';
     }
 
-    document.getElementById('btn-entrega-coletei').hidden = true;
-    document.getElementById('btn-entrega-entregue').hidden = false;
-    document.getElementById('btn-entrega-devolver').hidden = false;
+    const proximaParaColetar = entregasAtivas.find(
+      e => e.status === 'Entregador aceitou'
+    );
 
-    showToast('🛵 Pedido coletado. Agora siga para o cliente.');
+    if (proximaParaColetar) {
+      renderizarEntregaAtiva(proximaParaColetar);
+
+      showToast(
+        '📦 Pedido coletado. Agora colete o outro pedido do lote.'
+      );
+
+      return;
+    }
+
+    const todosColetados =
+      entregasAtivas.length > 0 &&
+      entregasAtivas.every(e => e.status === 'Coletado');
+
+    if (!todosColetados) {
+      throw new Error(
+        'O lote possui um status inesperado. Atualize a tela antes de sair.'
+      );
+    }
+
+    const selecionada =
+      encontrarEntregaAtiva(lojaColetadaId, pedidoColetadoId) ||
+      entregasAtivas[0];
+
+    renderizarEntregaAtiva(selecionada);
+
+    showToast(
+      entregasAtivas.length === 2
+        ? '📦 Os 2 pedidos foram coletados. O lote está pronto para sair.'
+        : '📦 Pedido coletado. A entrega está pronta para sair.'
+    );
 
   } catch (e) {
     showToast('⚠️ Erro: ' + (e.message || e.code));
   }
 });
 
-document.getElementById('btn-entrega-entregue')?.addEventListener('click', async () => {
-  if (!entregaAtualRef) return;
+document.getElementById('btn-entrega-sair')?.addEventListener('click', async () => {
+  if (!entregaAtualRef || !entregaAtualDados) return;
 
   try {
-    await fb.updateDoc(entregaAtualRef, {
-      status: 'Concluído',
-      concluidoEm: fb.serverTimestamp()
+    const lote = entregasAtivas.filter(e =>
+      e.status === 'Entregador aceitou' ||
+      e.status === 'Coletado'
+    );
+
+    if (lote.length === 0) {
+      throw new Error('Nenhuma entrega ativa disponível para saída.');
+    }
+
+    if (lote.length > MAX_ENTREGAS_LOTE) {
+      throw new Error(
+        'Inconsistência: existem mais de 2 entregas ativas neste lote.'
+      );
+    }
+
+    const lojaId = lote[0].lojaId;
+
+    if (lote.some(e => e.lojaId !== lojaId)) {
+      throw new Error(
+        'As entregas do lote precisam pertencer ao mesmo estabelecimento.'
+      );
+    }
+
+    if (lote.some(e => e.status !== 'Coletado')) {
+      throw new Error(
+        'Colete todos os pedidos do lote antes de sair para entrega.'
+      );
+    }
+
+    let sequenciaLote = null;
+
+    if (lote.length === 2) {
+      sequenciaLote = calcularSequenciaLote(lote[0], lote[1]);
+
+      if (!sequenciaLote || !Array.isArray(sequenciaLote.ordem)) {
+        throw new Error(
+          'Não foi possível determinar a sequência de entrega do lote.'
+        );
+      }
+    }
+
+    const loteSaidaRef = fb.doc(
+      db,
+      'franquias',
+      entregaFranquiaId,
+      'lotesEntregadores',
+      meuMotoristaId
+    );
+
+    await fb.runTransaction(db, async transaction => {
+      const snapshots = [];
+
+      // Todas as leituras acontecem antes de qualquer escrita.
+      for (const entrega of lote) {
+        const ref = entrega.ref || fb.doc(
+          db,
+          'franquias',
+          entregaFranquiaId,
+          'estabelecimentos',
+          entrega.lojaId,
+          'pedidos',
+          entrega.id
+        );
+
+        const snap = await transaction.get(ref);
+
+        snapshots.push({
+          entrega,
+          ref,
+          snap
+        });
+      }
+
+      const lotePersistidoSnap =
+        await transaction.get(loteSaidaRef);
+
+      if (!lotePersistidoSnap.exists()) {
+        throw new Error(
+          'O controle persistente deste lote não foi encontrado.'
+        );
+      }
+
+      const lotePersistido =
+        lotePersistidoSnap.data() || {};
+
+      if (
+        lotePersistido.entregadorUid !== meuMotoristaId ||
+        lotePersistido.franquiaId !== entregaFranquiaId ||
+        lotePersistido.lojaId !== lojaId
+      ) {
+        throw new Error(
+          'O controle persistente do lote não corresponde a esta entrega.'
+        );
+      }
+
+      if (lotePersistido.fase !== 'coleta') {
+        throw new Error(
+          'Este lote não está mais na fase de coleta.'
+        );
+      }
+
+      const idsPersistidos = Array.isArray(lotePersistido.pedidos)
+        ? [...lotePersistido.pedidos].sort()
+        : [];
+
+      const idsSaida = lote
+        .map(e => e.id)
+        .sort();
+
+      if (
+        idsPersistidos.length !== idsSaida.length ||
+        idsPersistidos.some((id, i) => id !== idsSaida[i])
+      ) {
+        throw new Error(
+          'Os pedidos ativos não correspondem ao lote persistente.'
+        );
+      }
+
+      for (const item of snapshots) {
+        if (!item.snap.exists()) {
+          throw new Error('Um dos pedidos do lote não foi encontrado.');
+        }
+
+        const pedido = item.snap.data() || {};
+
+        if (pedido.status !== 'Coletado') {
+          throw new Error(
+            'Um dos pedidos mudou de status. Atualize a tela e tente novamente.'
+          );
+        }
+
+        if (
+          pedido.entregador?.uid !== meuMotoristaId ||
+          pedido.entrega !== 'Interfood' ||
+          pedido.operadorEntrega !== 'Intermobilidade'
+        ) {
+          throw new Error(
+            'Um dos pedidos não pertence mais a este entregador.'
+          );
+        }
+      }
+
+      for (const item of snapshots) {
+        transaction.update(item.ref, {
+          status: 'Saiu para entrega',
+          saiuEntregaEm: fb.serverTimestamp()
+        });
+      }
+
+      transaction.update(loteSaidaRef, {
+        fase: 'em_entrega',
+        pedidos: sequenciaLote ? [...sequenciaLote.ordem] : [lote[0].id],
+        atualizadoEm: fb.serverTimestamp()
+      });
     });
 
-    showToast('🏠 Entrega concluída!');
-    resetarEntregaAtual();
+    lote.forEach(e => {
+      e.status = 'Saiu para entrega';
+    });
+
+    let primeira = lote[0];
+
+    if (sequenciaLote) {
+      primeira =
+        lote.find(e => e.id === sequenciaLote.ordem[0]) ||
+        lote[0];
+    }
+
+    renderizarEntregaAtiva(primeira);
+    renderizarEntregasDisponiveis([]);
+
+    showToast(
+      lote.length === 2
+        ? '🛵 Saída do lote iniciada. Siga para a primeira entrega.'
+        : '🛵 Saída iniciada. Novos pedidos não serão aceitos neste lote.'
+    );
 
   } catch (e) {
     showToast('⚠️ Erro: ' + (e.message || e.code));
+  }
+});
+
+let conclusaoEntregaEmAndamento = false;
+
+document.getElementById('btn-entrega-entregue')?.addEventListener('click', async () => {
+  if (!entregaAtualRef || !entregaAtualDados) return;
+  if (conclusaoEntregaEmAndamento) return;
+
+  conclusaoEntregaEmAndamento = true;
+
+  try {
+    if (entregaAtualDados.status !== 'Saiu para entrega') {
+      throw new Error('Esta entrega ainda não saiu para entrega.');
+    }
+
+    const lojaConcluidaId = entregaAtualDados.lojaId;
+    const pedidoConcluidoId = entregaAtualId;
+
+    const loteConclusaoRef = fb.doc(
+      db,
+      'franquias',
+      entregaFranquiaId,
+      'lotesEntregadores',
+      meuMotoristaId
+    );
+
+    await fb.runTransaction(db, async transaction => {
+      // Todas as leituras antes das escritas.
+      const pedidoSnap =
+        await transaction.get(entregaAtualRef);
+
+      const loteSnap =
+        await transaction.get(loteConclusaoRef);
+
+      if (!pedidoSnap.exists()) {
+        throw new Error('Pedido não encontrado.');
+      }
+
+      if (!loteSnap.exists()) {
+        throw new Error(
+          'O controle persistente do lote não foi encontrado.'
+        );
+      }
+
+      const pedido = pedidoSnap.data() || {};
+      const lotePersistido = loteSnap.data() || {};
+
+      if (
+        pedido.status !== 'Saiu para entrega' ||
+        pedido.entregador?.uid !== meuMotoristaId ||
+        pedido.entrega !== 'Interfood' ||
+        pedido.operadorEntrega !== 'Intermobilidade'
+      ) {
+        throw new Error(
+          'Esta entrega mudou de estado. Atualize a tela e tente novamente.'
+        );
+      }
+
+      if (
+        lotePersistido.entregadorUid !== meuMotoristaId ||
+        lotePersistido.franquiaId !== entregaFranquiaId ||
+        lotePersistido.lojaId !== lojaConcluidaId ||
+        lotePersistido.fase !== 'em_entrega'
+      ) {
+        throw new Error(
+          'O controle persistente não corresponde ao lote em entrega.'
+        );
+      }
+
+      const pedidosPersistidos =
+        Array.isArray(lotePersistido.pedidos)
+          ? [...lotePersistido.pedidos]
+          : [];
+
+      if (!pedidosPersistidos.includes(pedidoConcluidoId)) {
+        throw new Error(
+          'O pedido não pertence ao lote persistente.'
+        );
+      }
+
+      const pedidosRestantes =
+        pedidosPersistidos.filter(
+          id => id !== pedidoConcluidoId
+        );
+
+      transaction.update(entregaAtualRef, {
+        status: 'Concluído',
+        concluidoEm: fb.serverTimestamp()
+      });
+
+      if (pedidosRestantes.length === 0) {
+        transaction.delete(loteConclusaoRef);
+      } else {
+        transaction.update(loteConclusaoRef, {
+          pedidos: pedidosRestantes,
+          fase: 'em_entrega',
+          atualizadoEm: fb.serverTimestamp()
+        });
+      }
+    });
+
+    removerEntregaAtiva(
+      lojaConcluidaId,
+      pedidoConcluidoId
+    );
+
+    const proxima =
+      entregasAtivas.find(
+        p => p.status === 'Saiu para entrega'
+      ) ||
+      null;
+
+    if (proxima) {
+      renderizarEntregaAtiva(proxima);
+
+      showToast(
+        '🏠 Entrega concluída! Siga para o próximo pedido do lote.'
+      );
+    } else {
+      renderizarEntregaAtiva(null);
+
+      showToast('🏠 Entrega concluída! Lote finalizado.');
+    }
+
+  } catch (e) {
+    showToast('⚠️ Erro: ' + (e.message || e.code));
+  } finally {
+    conclusaoEntregaEmAndamento = false;
   }
 });
 

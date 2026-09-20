@@ -442,11 +442,21 @@
       <div style="font-size:13px;color:#9098A8;margin-bottom:4px;">Endereço restaurante: <b id="entrega-restaurante-end" style="color:#E8EAF0;">—</b></div>
       <div style="font-size:13px;color:#9098A8;margin-bottom:4px;">Cliente: <b id="entrega-cliente-nome" style="color:#E8EAF0;">—</b></div>
       <div style="font-size:13px;color:#9098A8;margin-bottom:12px;">Entregar em: <b id="entrega-cliente-end" style="color:#E8EAF0;">—</b></div>
+
+      <div id="bloco-lote-entrega" hidden style="margin-bottom:12px;padding:10px;background:#111827;border-radius:10px;border:1px solid #374151;">
+        <div style="font-size:12px;font-weight:700;color:#FFB067;margin-bottom:8px;">
+          📦 PEDIDOS DO LOTE
+          <span id="contador-lote-entrega" style="color:#E8EAF0;">1/2</span>
+        </div>
+        <div id="lista-lote-entrega" style="display:flex;flex-direction:column;gap:6px;"></div>
+      </div>
+
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
         <button class="btn-accept" id="btn-entrega-coletei" style="flex:1;">✅ Coletei no restaurante</button>
+        <button class="btn-accept" id="btn-entrega-sair" hidden style="flex:1;">🚚 Sair para entrega</button>
         <button class="btn-accept" id="btn-entrega-entregue" hidden style="flex:1;background:#22C55E;">🏠 Entreguei ao cliente</button>
         <button class="btn-accept" id="btn-entrega-devolver" hidden style="flex:1;background:#E8002D;">↩️ Não consegui entregar</button>
-        <button class="btn-reject" id="btn-entrega-devolver" hidden style="flex:1;">↩️ Devolver ao restaurante</button>
+        <button class="btn-reject" id="btn-entrega-devolver-restaurante" hidden style="flex:1;">↩️ Devolver ao restaurante</button>
       </div>
     </div>
 
