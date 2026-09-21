@@ -56,7 +56,6 @@
 - `functions/main.js`
 - `functions/index.js`
 - `functions/pedido-coordenadas.js`
-- `functions/pedido-coordenadas-adapter.js`
 - `functions/fechamentos-interfood.js`
 - `functions/push-interfood.js`
 - `functions/package.json`
