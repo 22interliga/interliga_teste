@@ -23,9 +23,10 @@
 - `configuracao-estabelecimento-interfood-homologacao.html`
 - `foto-produto-estabelecimento-homologacao.html`
 
-### Entregador
-- `login-entregador-firebase-teste.html`
-- `entregador-interfood-firebase-teste.html`
+### Entregador / Motorista integrado
+- O fluxo oficial de entregas Interfood foi integrado à Intermobilidade.
+- Tela atualmente usada e validada: `motorista-homologacao.html?abrir=entregas`
+- `entregador-interfood-firebase-teste.html` permanece apenas como versão anterior/histórica e não deve ser tratado como módulo oficial atual.
 
 ### Franqueado / operação / financeiro
 - `auditoria-interfood-franqueado.html`
@@ -85,36 +86,38 @@ Recomendação: manter na homologação, mas não incluir numa futura publicaç�
 - `entregador-interfood-teste.html`
 - `entregador-interfood-v2-teste.html`
 
-O painel atualmente usado e validado é `entregador-interfood-firebase-teste.html`.
+O fluxo atualmente usado e validado é o módulo integrado da Intermobilidade:
+`motorista-homologacao.html?abrir=entregas`.
 
 Esses arquivos não foram apagados. Devem permanecer apenas como histórico até uma limpeza posterior explicitamente autorizada.
 
-## 4. Achado crítico da auditoria: `firebase.json`
+## 4. Estado atual validado do `firebase.json` e Rules
 
-O arquivo `firebase.json` aponta atualmente para:
+Auditoria atualizada em 21/09/2026:
 
-- `firestore.rules`
-- `storage.rules`
+- `firebase.json` referencia `firestore.rules` e `storage.rules`.
+- Ambos os arquivos existem na raiz e estão versionados.
+- `firestore.rules` é a regra principal consolidada da homologação e contém a evolução das regras do Interfood e da integração com a Mobilidade.
+- Não substituir `firestore.rules` pelos arquivos auxiliares `firestore-interfood-*.rules`.
+- `storage.rules` é a regra ativa/versionada do Firebase Storage da homologação.
+- Não substituir automaticamente `storage.rules` por `storage-interfood-seguranca-teste.rules`.
+- Qualquer alteração futura de Rules deve ser diagnosticada e validada antes de deploy.
 
-Esses dois arquivos não existem na raiz atual do repositório.
+## 5. Runtime atual
 
-A regra Firestore que existe e vem sendo trabalhada no Interfood é:
+Auditoria atualizada em 21/09/2026:
 
-- `firestore-interfood-seguranca-teste.rules`
-
-Consequência: um comando genérico como `firebase deploy --only firestore:rules` usando o `firebase.json` atual pode falhar ou não usar a regra esperada. Não corrigir isso de forma automática sem antes decidir também como o Storage deve ser configurado, porque o `storage.rules` referenciado também não existe.
-
-## 5. Achado de runtime
-
-As Functions continuam configuradas em Node.js 20 tanto em `functions/package.json` quanto em `firebase.json`. Atualizar o runtime é pendência obrigatória antes de produção, seguida de nova bateria de testes.
+- `firebase.json` está configurado com runtime `nodejs22`.
+- A antiga observação sobre Node.js 20 está superada.
+- Antes de futura migração para produção, confirmar novamente a versão suportada e executar bateria de testes.
 
 ## 6. Regras para futura migração
 
 - Migrar somente o núcleo oficial acima.
 - Não copiar arquivos de simulação/diagnóstico como páginas públicas de produção.
 - Revisar `firebase.json` antes de qualquer deploy amplo.
-- Confirmar arquivo oficial de Firestore Rules e criar/definir a política oficial de Storage Rules.
-- Atualizar runtime Node antes de produção.
+- Preservar `firestore.rules` e `storage.rules` como referências ativas da homologação e revisar qualquer diferença necessária antes da migração.
+- Revalidar o runtime Node suportado pelo Firebase no momento da migração; atualmente a homologação usa `nodejs22`.
 - Congelar commit aprovado da homologação antes de qualquer migração.
 - Executar smoke test controlado após a migração.
 
