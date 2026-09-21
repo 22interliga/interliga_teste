@@ -130,7 +130,9 @@
     const infoEl = document.getElementById('info');
 
     const params = new URLSearchParams(window.location.search);
-    const token = params.get('t');
+    const corridaId = params.get('id');
+    const ENDPOINT =
+      'https://us-central1-interliga-homologacao-eb0f2.cloudfunctions.net/consultarCorridaPublica';
 
     let mapa = null;
     let marcadorMotorista = null;
@@ -188,9 +190,77 @@
       mapa.panTo(posicao);
     }
 
+    async function consultarCorrida() {
+      try {
+        const resposta = await fetch(
+          ENDPOINT + '?id=' + encodeURIComponent(corridaId),
+          { cache: 'no-store' }
+        );
+
+        const dados = await resposta.json();
+
+        if (!resposta.ok || !dados.ok || !dados.corrida) {
+          throw new Error(
+            dados.erro || 'Não foi possível consultar esta corrida.'
+          );
+        }
+
+        const corrida = dados.corrida;
+
+        statusEl.classList.remove('erro');
+        statusEl.textContent =
+          corrida.status === 'finalizada'
+            ? 'Corrida finalizada'
+            : 'Acompanhamento em tempo real';
+
+        const detalhes = [];
+
+        if (corrida.motoristaNome) {
+          detalhes.push('Motorista: ' + corrida.motoristaNome);
+        }
+
+        if (corrida.motoristaVeiculo) {
+          detalhes.push(
+            'Veículo: ' +
+            corrida.motoristaVeiculo +
+            (corrida.motoristaPlaca ? ' • ' + corrida.motoristaPlaca : '')
+          );
+        }
+
+        if (corrida.origem) {
+          detalhes.push('Origem: ' + corrida.origem);
+        }
+
+        if (corrida.destino) {
+          detalhes.push('Destino: ' + corrida.destino);
+        }
+
+        infoEl.textContent =
+          detalhes.join(' | ') ||
+          'Dados da corrida disponíveis.';
+
+        if (
+          typeof corrida.motoristaLat === 'number' &&
+          typeof corrida.motoristaLon === 'number'
+        ) {
+          atualizarMotorista(
+            corrida.motoristaLat,
+            corrida.motoristaLon
+          );
+        }
+
+        return corrida.status;
+      } catch (erro) {
+        mostrarErro(
+          erro.message || 'Não foi possível atualizar o acompanhamento.'
+        );
+        return null;
+      }
+    }
+
     iniciarMapa();
 
-    if (!token) {
+    if (!corridaId) {
 
       mostrarErro(
         'Este link não possui um código de acompanhamento válido.'
@@ -198,21 +268,14 @@
 
     } else {
 
-      statusEl.textContent = 'Aguardando dados da corrida';
-      infoEl.textContent =
-        'O acompanhamento será iniciado quando o compartilhamento estiver disponível.';
+      statusEl.textContent = 'Carregando corrida...';
+      infoEl.textContent = 'Aguarde alguns instantes.';
 
-      /*
-       * ETAPA 81:
-       *
-       * A página pública está criada, mas propositalmente
-       * ainda NÃO consulta o Firestore.
-       *
-       * Na próxima etapa será conectada exclusivamente
-       * à coleção pública protegida por token.
-       *
-       * Nunca consultar /corridas diretamente nesta página.
-       */
+      const statusInicial = await consultarCorrida();
+
+      if (statusInicial && statusInicial !== 'finalizada') {
+        setInterval(consultarCorrida, 10000);
+      }
 
     }
 
