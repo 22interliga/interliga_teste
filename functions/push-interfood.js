@@ -3,15 +3,15 @@ const {onDocumentWritten} = require('firebase-functions/v2/firestore');
 const admin = require('firebase-admin');
 const crypto = require('crypto');
 
-const ALLOWED_ORIGIN='https://22interliga.github.io';
+const ALLOWED_ORIGINS=new Set(['https://22interliga.github.io','https://interliga-homologacao-eb0f2.web.app']);
 const TOKENS='pushTokensInterfood';
-const WEB_BASE='https://22interliga.github.io/interliga_teste/';
+const WEB_BASE='https://interliga-homologacao-eb0f2.web.app/';
 const WEB_ICON=WEB_BASE+'icon-192.png';
 const TOKEN_MAX_AGE_DAYS=90;
 
 function cors(req,res){
   const origin=req.get('origin');
-  if(origin===ALLOWED_ORIGIN)res.set('Access-Control-Allow-Origin',origin);
+  if(ALLOWED_ORIGINS.has(origin))res.set('Access-Control-Allow-Origin',origin);
   res.set('Vary','Origin');
   res.set('Access-Control-Allow-Headers','Authorization, Content-Type, X-Firebase-AppCheck');
   res.set('Access-Control-Allow-Methods','POST, OPTIONS');
@@ -59,7 +59,7 @@ exports.registrarPushInterfood=onRequest({region:'us-central1',timeoutSeconds:30
   cors(req,res);
   if(req.method==='OPTIONS')return res.status(204).send('');
   if(req.method!=='POST')return res.status(405).json({error:'Método não permitido.'});
-  if(req.get('origin')&&req.get('origin')!==ALLOWED_ORIGIN)return res.status(403).json({error:'Origem não autorizada.'});
+  if(req.get('origin')&&ALLOWED_ORIGINS.has(req.get('origin'))===false)return res.status(403).json({error:'Origem não autorizada.'});
   try{
     await validarAppCheck(req);
     const decoded=await usuario(req);
@@ -270,7 +270,7 @@ exports.notificarPedidoInterfood=onDocumentWritten({
       title:'Interfood · Nova entrega',
       body:'Pedido '+numero+' pronto para retirada.',
       tag:'interfood-entrega-'+pedidoId,
-      url:'./entregador-interfood-firebase-teste.html?franquia='+encodeURIComponent(franquiaId)
+      url:'./motorista-homologacao.html?abrir=entregas&franquia='+encodeURIComponent(franquiaId)
     });
   }
 });
