@@ -413,6 +413,11 @@ match /lotesEntregadores/{uid}{
       // Depois do aceite, somente participantes e gestores.
       allow read: if signedIn() && (
         resource.data.status == 'aguardando' ||
+        (
+          resource.data.status == 'cancelada'
+          && resource.data.keys().hasAny(['motoristaAlvoAtual'])
+          && resource.data.motoristaAlvoAtual == request.auth.uid
+        ) ||
         request.auth.uid == resource.data.passageiroId ||
         request.auth.uid == resource.data.motoristaId ||
         adminMasterAtivo() ||
@@ -466,6 +471,19 @@ match /lotesEntregadores/{uid}{
         ||
 
         (
+          // Passageiro pode cancelar voluntariamente a própria busca
+          // enquanto a corrida ainda está aguardando.
+          request.auth.uid == resource.data.passageiroId
+          && resource.data.status == 'aguardando'
+          && request.resource.data.status == 'cancelada'
+          && request.resource.data.passageiroId == resource.data.passageiroId
+          && request.resource.data.diff(resource.data).affectedKeys()
+               .hasOnly(['status'])
+        )
+
+        ||
+
+        (
           // Passageiro pode encerrar a própria busca somente após
           // permanecer aguardando, sem atribuir ou alterar motorista.
           request.auth.uid == resource.data.passageiroId
@@ -506,7 +524,6 @@ match /lotesEntregadores/{uid}{
               && resource.data.keys().hasAny(['motoristaAlvoAtual'])
               && resource.data.motoristaAlvoAtual == request.auth.uid
               && request.resource.data.status == 'aguardando'
-              && request.resource.data.motoristaId == resource.data.motoristaId
               && request.resource.data.diff(resource.data).affectedKeys()
                    .hasOnly([
                      'recusantes',

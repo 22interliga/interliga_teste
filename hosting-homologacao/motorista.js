@@ -1965,14 +1965,7 @@ function exibirCorridaRecebida(corrida) {
   if (elPaxStats) elPaxStats.textContent = 'Carregando...';
 
   if (corrida.passageiroId && firebaseReady && db) {
-    Promise.all([
-      fb.getDoc(fb.doc(db, 'passageiros', corrida.passageiroId)),
-      fb.getDocs(fb.query(
-        fb.collection(db, 'corridas'),
-        fb.where('passageiroId', '==', corrida.passageiroId),
-        fb.where('status', '==', 'finalizada')
-      )),
-    ]).then(([snapPax, snapCorridas]) => {
+    fb.getDoc(fb.doc(db, 'passageiros', corrida.passageiroId)).then((snapPax) => {
       let avaliacao = null;
 
       if (snapPax.exists()) {
@@ -1994,13 +1987,8 @@ function exibirCorridaRecebida(corrida) {
         }
       }
 
-      const total = snapCorridas.size;
       if (elPaxStats) {
-        const estrelas = avaliacao ? `⭐ ${avaliacao}` : '⭐ Sem avaliações';
-        const corridas = total === 0
-          ? '🆕 Primeira corrida'
-          : `🚗 ${total} corrida${total > 1 ? 's' : ''}`;
-        elPaxStats.textContent = `${estrelas} · ${corridas}`;
+        elPaxStats.textContent = avaliacao ? `⭐ ${avaliacao}` : '⭐ Sem avaliações';
       }
     }).catch((e) => {
       console.warn('[motorista] erro ao carregar dados do passageiro na oferta:', e);
@@ -2297,15 +2285,8 @@ function onEnterOngoing() {
   setText('passenger-corridas', '');
 
   if (corrida.passageiroId && firebaseReady && db) {
-    // Busca avaliação e total de corridas do passageiro ao mesmo tempo
-    Promise.all([
-      fb.getDoc(fb.doc(db, 'passageiros', corrida.passageiroId)),
-      fb.getDocs(fb.query(
-        fb.collection(db, 'corridas'),
-        fb.where('passageiroId', '==', corrida.passageiroId),
-        fb.where('status', '==', 'finalizada')
-      )),
-    ]).then(([snapPax, snapCorridas]) => {
+    // Busca os dados autorizados do passageiro para a corrida em andamento
+    fb.getDoc(fb.doc(db, 'passageiros', corrida.passageiroId)).then((snapPax) => {
       if (snapPax.exists()) {
         const dadosPax = snapPax.data() || {};
 
@@ -2326,17 +2307,8 @@ function onEnterOngoing() {
           setText('passenger-rating', '⭐ ' + dadosPax.avaliacao);
         }
       }
-      const totalCorridas = snapCorridas.size;
       const elCorridas = document.getElementById('passenger-corridas');
-      if (elCorridas) {
-        if (totalCorridas === 0) {
-          elCorridas.textContent = '🆕 Primeiro pedido!';
-          elCorridas.style.color = '#f59e0b';
-        } else {
-          elCorridas.textContent = `🚗 ${totalCorridas} corrida${totalCorridas > 1 ? 's' : ''} realizad${totalCorridas > 1 ? 'as' : 'a'}`;
-          elCorridas.style.color = 'var(--text-soft)';
-        }
-      }
+      if (elCorridas) elCorridas.textContent = '';
     }).catch(() => {});
   }
 
