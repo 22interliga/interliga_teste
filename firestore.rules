@@ -521,8 +521,10 @@ match /lotesEntregadores/{uid}{
               // o motorista alvo pode apenas devolver a corrida para a fila,
               // sem assumir a corrida e sem alterar dados de negócio.
               resource.data.status == 'aguardando'
-              && resource.data.keys().hasAny(['motoristaAlvoAtual'])
-              && resource.data.motoristaAlvoAtual == request.auth.uid
+              && (
+                !resource.data.keys().hasAny(['motoristaAlvoAtual'])
+                || resource.data.motoristaAlvoAtual == request.auth.uid
+              )
               && request.resource.data.status == 'aguardando'
               && request.resource.data.diff(resource.data).affectedKeys()
                    .hasOnly([
