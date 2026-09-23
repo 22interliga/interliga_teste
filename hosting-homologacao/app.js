@@ -916,7 +916,7 @@ function calcularPrecos() {
   const km = semCoordenada ? 0 : distanciaRotaTotal();
   const risco = semCoordenada ? { acrescimo: 0, percentual: 0, zonasAtingidas: [] } : calcularAcrescimoRisco(state.origem, state.destino);
   const percentualHorario = calcularPercentualHorario();
-  const cidade = semCoordenada ? 'madre' : detectarCidade(state.origem.lat, state.origem.lon);
+  const cidade = semCoordenada ? (state.passageiroDados?.cidade || 'madre') : detectarCidade(state.origem.lat, state.origem.lon);
   const tabela = tabelaPrecosCachePorCidade[cidade] || TABELA_PRECOS_PADRAO;
   const multiplicadorZona = semCoordenada ? 1.0 : obterMultiplicadorZona(state.origem.lat, state.origem.lon, cidade);
 
