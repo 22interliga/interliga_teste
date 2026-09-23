@@ -3554,7 +3554,7 @@ document.getElementById('btn-trocar-para-motorista')?.addEventListener('click', 
 // NOTIFICAÇÕES PUSH — recebe aviso (ex: "motorista aceitou") mesmo com o
 // app fechado/em segundo plano (precisa da chave VAPID do Firebase Console)
 // ─────────────────────────────────────
-const VAPID_KEY = 'BNlkkjvYwHosBBv6UWCzKWCB58rNoEP1YrlGFsXetoPFLDMWUNdA2r4VqtD4sHwgdb_yyKbOBydT2dxKDXWrrY4'; // Firebase Console → Configurações do projeto → Cloud Messaging → Web Push certificates
+const VAPID_KEY = 'BOzk5NqpT7rKj3Ni5YDOcBcCvG3F8UFompPCchQH8JqDddL-MZ-OfTHGMvxul8cYWn0uWTuIUb6vVAMarBDEM20'; // Firebase Console → Configurações do projeto → Cloud Messaging → Web Push certificates
 
 let pushConfigurado = false;
 
