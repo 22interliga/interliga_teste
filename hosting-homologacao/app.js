@@ -1754,6 +1754,7 @@ function ouvirAceiteCorrida(corridaId) {
         avaliacao: data.motoristaAvaliacao || '4.8',
         motoristaId: data.motoristaId || null,
         selfie: data.motoristaSelfie || null,
+        preco: data.preco ?? null,
       });
       // Guarda o nome do motorista no histórico local assim que aceita (não precisa esperar finalizar)
       atualizarStatusHistoricoLocal('aceita', { motoristaNome: data.motoristaNome || 'Motorista', motoristaVeiculo: data.motoristaVeiculo, motoristaPlaca: data.motoristaPlaca });
@@ -1959,7 +1960,7 @@ async function enviarAvaliacao(tipo, paraId, nota, comentario, corridaId) {
   return dados;
 }
 
-function exibirMotoristaEncontrado({ nome, veiculo, placa, avaliacao, motoristaId, selfie = null }) {
+function exibirMotoristaEncontrado({ nome, veiculo, placa, avaliacao, motoristaId, selfie = null, preco = null }) {
   timestampAceite = Date.now(); // marca o momento do aceite para calcular multa de cancelamento
   state.motoristaIdDaCorrida = motoristaId || null;
   document.getElementById('block-searching').hidden = true;
@@ -1987,7 +1988,7 @@ function exibirMotoristaEncontrado({ nome, veiculo, placa, avaliacao, motoristaI
   document.getElementById('driver-name').textContent = nome;
   document.getElementById('driver-detail').textContent = `⭐ ${avaliacao} · ${veiculo} · ${placa}`;
   document.getElementById('driver-status').textContent = '🟢 A caminho';
-  document.getElementById('driver-price').textContent = 'R$ ' + (state.precos[state.categoriaEscolhida] || 18).toFixed(2).replace('.', ',');
+  document.getElementById('driver-price').textContent = 'R$ ' + Number(preco ?? state.precos[state.categoriaEscolhida] ?? 18).toFixed(2).replace('.', ',');
 
   showToast(`✅ ${nome} aceitou sua corrida!`);
 
