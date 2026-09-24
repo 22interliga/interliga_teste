@@ -28,5 +28,21 @@ export async function carregarFirebase(nomeApp) {
   const db = fb.getFirestore(app);
   const auth = authMod.getAuth(app);
 
-  return { app, db, auth, fb, authMod };
+  let appCheck = null;
+  let appCheckMod = null;
+
+  try {
+    appCheckMod = await import(`${base}/firebase-app-check.js`);
+    appCheck = appCheckMod.initializeAppCheck(app, {
+      provider: new appCheckMod.ReCaptchaEnterpriseProvider(
+        '6LdiF6wtAAAAAKQNAdA4ctM0MeVIo7PDDdndbq9-'
+      ),
+      isTokenAutoRefreshEnabled: true
+    });
+    console.log('✅ App Check inicializado:', nomeApp);
+  } catch (e) {
+    console.warn('⚠️ App Check não inicializado; Firebase continuará disponível:', e);
+  }
+
+  return { app, db, auth, fb, authMod, appCheck, appCheckMod };
 }
